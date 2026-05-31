@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path, PurePosixPath
 
 from fastapi import APIRouter, Query
@@ -65,6 +66,49 @@ def _parse_line_number(value: str | int | None, default_value: int) -> int | Non
     if parsed < 1:
         return None
     return parsed
+
+
+def _find_symbol_range(raw_lines: list[str], symbol_name: str) -> tuple[int, int] | None:
+    escaped_name = re.escape(symbol_name)
+    class_pattern = re.compile(rf"\b(class|struct)\s+{escaped_name}\b")
+    function_pattern = re.compile(rf"\b{escaped_name}\s*\(")
+    control_pattern = re.compile(r"^\s*(if|for|while|switch|return|catch)\b")
+    candidate_ranges: list[tuple[int, int]] = []
+
+    for line_index, line in enumerate(raw_lines, start=1):
+        stripped = line.strip()
+        is_class_like = class_pattern.search(line) is not None
+        is_function_like = function_pattern.search(line) is not None and not control_pattern.search(stripped)
+        if not is_class_like and not is_function_like:
+            continue
+
+        block_line = None
+        for scan_index in range(line_index, len(raw_lines) + 1):
+            scan_line = raw_lines[scan_index - 1]
+            if "{" in scan_line:
+                block_line = scan_index
+                break
+            if ";" in scan_line:
+                break
+        if block_line is None:
+            continue
+
+        brace_depth = 0
+        started = False
+        for end_index in range(block_line, len(raw_lines) + 1):
+            for char in raw_lines[end_index - 1]:
+                if char == "{":
+                    brace_depth += 1
+                    started = True
+                elif char == "}" and started:
+                    brace_depth -= 1
+            if started and brace_depth == 0:
+                candidate_ranges.append((line_index, end_index))
+                break
+
+    if not candidate_ranges:
+        return None
+    return min(candidate_ranges, key=lambda item: item[0])
 
 
 @router.post("/revoke")
@@ -182,4 +226,51 @@ async def get_file(
         next_to = next_from + (DEFAULT_FILE_TO - DEFAULT_FILE_FROM)
         rendered.append(f"--- 続きは from={next_from}&to={next_to} で取得 ---")
 
+    return plain_text("\n".join(rendered))
+
+
+@router.get("/t/{token}/symbol")
+async def get_symbol(
+    token: str,
+    path: str | None = Query(None),
+    name: str | None = Query(None),
+) -> PlainTextResponse:
+    workspace = _resolve_workspace(token)
+    if workspace is None:
+        return error("invalid or expired token", 403)
+
+    if path is None or not path.strip():
+        return error("missing path", 400)
+    if name is None or not name.strip():
+        return error("missing name", 400)
+
+    normalized_path = _normalize_requested_path(path.strip())
+    if normalized_path is None:
+        return error("unsafe path", 400)
+
+    target_path = _resolve_safe_file_path(workspace, normalized_path)
+    if target_path is None:
+        return error("unsafe path", 400)
+
+    normalized_path_str = normalized_path.as_posix()
+    if not target_path.is_file() or not _is_indexed_readable_file(workspace, normalized_path_str):
+        return error("file is not indexed or not readable", 404)
+
+    try:
+        raw_lines = target_path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError):
+        return error("file is not indexed or not readable", 404)
+
+    symbol_name = name.strip()
+    symbol_range = _find_symbol_range(raw_lines, symbol_name)
+    if symbol_range is None:
+        return error(f"symbol not found: {symbol_name}", 404)
+
+    start_line, end_line = symbol_range
+    selected_lines = raw_lines[start_line - 1 : end_line]
+    line_number_width = len(str(end_line))
+    rendered = [f"# {normalized_path_str} symbol: {symbol_name} lines {start_line}-{end_line}", ""]
+    rendered.extend(
+        f"{number:>{line_number_width}}| {line}" for number, line in enumerate(selected_lines, start=start_line)
+    )
     return plain_text("\n".join(rendered))
