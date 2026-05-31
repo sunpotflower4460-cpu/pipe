@@ -23,9 +23,6 @@ def _normalize_requested_path(requested_path: str) -> PurePosixPath | None:
 
 
 def _resolve_safe_file_path(workspace: Path, normalized: PurePosixPath) -> Path | None:
-    if normalized.is_absolute() or any(part in {"", ".", ".."} for part in normalized.parts):
-        return None
-
     candidate = (workspace / Path(*normalized.parts)).resolve()
     workspace_resolved = workspace.resolve()
     if candidate != workspace_resolved and workspace_resolved not in candidate.parents:
@@ -173,7 +170,8 @@ async def get_file(
 
     actual_to = min(resolved_to, resolved_from + MAX_FILE_RESPONSE_LINES - 1, len(raw_lines))
     selected_lines = raw_lines[resolved_from - 1 : actual_to]
-    line_number_width = max(len(str(actual_to)), len(str(resolved_from)))
+    display_upper_bound = actual_to if selected_lines else resolved_from
+    line_number_width = len(str(display_upper_bound))
     rendered = [f"# {normalized_path_str} lines {resolved_from}-{actual_to}", ""]
     rendered.extend(
         f"{number:>{line_number_width}}| {line}" for number, line in enumerate(selected_lines, start=resolved_from)

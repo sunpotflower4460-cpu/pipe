@@ -108,6 +108,17 @@ class TokenRoutesTestCase(unittest.TestCase):
         self.assertIn("1600| line 1600", body)
         self.assertIn("--- 続きは from=1601&to=2200 で取得 ---", body)
 
+    def test_file_accepts_equal_from_and_to(self) -> None:
+        source = "".join(f"line {number}\n" for number in range(1, 11)).encode("utf-8")
+        token = self._ingest_sample({"src/range.py": source})
+
+        response = asyncio.run(serve_module.get_file(token, path="src/range.py", from_line="5", to_line="5"))
+        self.assertEqual(response.status_code, 200)
+        body = response.body.decode("utf-8")
+        self.assertIn("# src/range.py lines 5-5", body)
+        self.assertIn("5| line 5", body)
+        self.assertNotIn("6| line 6", body)
+
     def test_file_requires_indexed_path(self) -> None:
         token = self._ingest_sample()
         workspace = self.workspace_root / token
@@ -141,6 +152,12 @@ class TokenRoutesTestCase(unittest.TestCase):
         self.assertEqual(invalid_type.status_code, 400)
         self.assertEqual(invalid_type.headers["content-type"], "text/plain; charset=utf-8")
         self.assertEqual(invalid_type.body.decode("utf-8"), "ERROR: invalid line range")
+
+        valid_numeric_strings = asyncio.run(serve_module.get_file(token, path="README.md", from_line="1", to_line="10"))
+        self.assertEqual(valid_numeric_strings.status_code, 200)
+        self.assertEqual(valid_numeric_strings.headers["content-type"], "text/plain; charset=utf-8")
+        self.assertIn("1| # sample", valid_numeric_strings.body.decode("utf-8"))
+        self.assertIn("# README.md lines 1-1", valid_numeric_strings.body.decode("utf-8"))
 
     def test_index_pagination(self) -> None:
         token = self._ingest_sample()
