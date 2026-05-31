@@ -13,6 +13,9 @@ MAX_UNCOMPRESSED_BYTES = int(os.getenv("MAX_UNCOMPRESSED_BYTES", str(200 * 1024 
 MAX_WORKSPACE_ALLOCATION_RETRIES = int(os.getenv("MAX_WORKSPACE_ALLOCATION_RETRIES", "5"))
 TOKEN_TTL_DAYS = int(os.getenv("TOKEN_TTL_DAYS", "7"))
 
+# /t/{token}/index defaults
+MAX_INDEX_RESPONSE_FILES = int(os.getenv("MAX_INDEX_RESPONSE_FILES", "500"))
+
 # /t/{token}/file defaults
 DEFAULT_FILE_FROM = int(os.getenv("DEFAULT_FILE_FROM", "1"))
 DEFAULT_FILE_TO = int(os.getenv("DEFAULT_FILE_TO", "600"))
