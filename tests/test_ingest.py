@@ -8,6 +8,7 @@ from pathlib import Path
 from starlette.datastructures import Headers, UploadFile
 
 import app.ingest as ingest_module
+import app.tokens as tokens_module
 
 
 def make_zip(entries: dict[str, bytes]) -> bytes:
@@ -21,11 +22,22 @@ def make_zip(entries: dict[str, bytes]) -> bytes:
 class IngestTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp_dir = tempfile.TemporaryDirectory()
+        tmp_base = Path(self.tmp_dir.name)
         self.original_workspace_root = ingest_module.WORKSPACE_ROOT
-        ingest_module.WORKSPACE_ROOT = Path(self.tmp_dir.name) / "workspace"
+        self.original_tokens_base_dir = tokens_module.BASE_DIR
+        self.original_tokens_workspace_root = tokens_module.WORKSPACE_ROOT
+        self.original_tokens_file = tokens_module.TOKENS_FILE
+
+        ingest_module.WORKSPACE_ROOT = tmp_base / "workspace"
+        tokens_module.BASE_DIR = tmp_base
+        tokens_module.WORKSPACE_ROOT = ingest_module.WORKSPACE_ROOT
+        tokens_module.TOKENS_FILE = tmp_base / "tokens.json"
 
     def tearDown(self) -> None:
         ingest_module.WORKSPACE_ROOT = self.original_workspace_root
+        tokens_module.BASE_DIR = self.original_tokens_base_dir
+        tokens_module.WORKSPACE_ROOT = self.original_tokens_workspace_root
+        tokens_module.TOKENS_FILE = self.original_tokens_file
         self.tmp_dir.cleanup()
 
     def call_ingest(self, filename: str, payload: bytes, content_type: str) -> tuple[int, str, str]:

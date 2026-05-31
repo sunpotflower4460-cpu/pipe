@@ -17,7 +17,7 @@ from app.config import (
 )
 from app.index import build_index
 from app.responses import error, plain_text
-from app.tokens import generate_token
+from app.tokens import generate_token, register_token
 
 router = APIRouter()
 
@@ -128,6 +128,7 @@ async def ingest(file: UploadFile = File(...)) -> PlainTextResponse:
                 shutil.copyfileobj(src, dst)
 
         build_index(workspace_dir)
+        register_token(token, workspace_dir)
     except Exception:
         shutil.rmtree(workspace_dir, ignore_errors=True)
         raise
