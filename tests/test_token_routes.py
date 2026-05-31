@@ -159,6 +159,83 @@ class TokenRoutesTestCase(unittest.TestCase):
         self.assertIn("1| # sample", valid_numeric_strings.body.decode("utf-8"))
         self.assertIn("# README.md lines 1-1", valid_numeric_strings.body.decode("utf-8"))
 
+    def test_symbol_extracts_function_block(self) -> None:
+        source = (
+            "#include <cstdint>\n"
+            "void helper();\n"
+            "\n"
+            "void PluginProcessor::processBlock(int value)\n"
+            "{\n"
+            "  if (value) {\n"
+            "    value -= 1;\n"
+            "  }\n"
+            "}\n"
+            "void after() {}\n"
+        ).encode("utf-8")
+        token = self._ingest_sample({"Source/PluginProcessor.cpp": source})
+
+        response = asyncio.run(
+            serve_module.get_symbol(token, path="Source/PluginProcessor.cpp", name="processBlock")
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"], "text/plain; charset=utf-8")
+        body = response.body.decode("utf-8")
+        self.assertIn("# Source/PluginProcessor.cpp symbol: processBlock lines 4-9", body)
+        self.assertIn("4| void PluginProcessor::processBlock(int value)", body)
+        self.assertIn("9| }", body)
+        self.assertNotIn("10| void after() {}", body)
+
+    def test_symbol_plain_text_errors_and_token_validation(self) -> None:
+        token = self._ingest_sample({"src/sample.cpp": b"void run() {}\n"})
+
+        invalid_token = asyncio.run(serve_module.get_symbol("not-a-real-token", path="src/sample.cpp", name="run"))
+        self.assertEqual(invalid_token.status_code, 403)
+        self.assertEqual(invalid_token.headers["content-type"], "text/plain; charset=utf-8")
+        self.assertEqual(invalid_token.body.decode("utf-8"), "ERROR: invalid or expired token")
+
+        missing_path = asyncio.run(serve_module.get_symbol(token, path=None, name="run"))
+        self.assertEqual(missing_path.status_code, 400)
+        self.assertEqual(missing_path.body.decode("utf-8"), "ERROR: missing path")
+
+        missing_name = asyncio.run(serve_module.get_symbol(token, path="src/sample.cpp", name=None))
+        self.assertEqual(missing_name.status_code, 400)
+        self.assertEqual(missing_name.body.decode("utf-8"), "ERROR: missing name")
+
+        unsafe_path = asyncio.run(serve_module.get_symbol(token, path="../tokens.json", name="run"))
+        self.assertEqual(unsafe_path.status_code, 400)
+        self.assertEqual(unsafe_path.body.decode("utf-8"), "ERROR: unsafe path")
+
+        not_found = asyncio.run(serve_module.get_symbol(token, path="src/sample.cpp", name="missingSymbol"))
+        self.assertEqual(not_found.status_code, 404)
+        self.assertEqual(not_found.body.decode("utf-8"), "ERROR: symbol not found: missingSymbol")
+
+        workspace = self.workspace_root / token
+        (workspace / "secret.cpp").write_text("void hidden() {}", encoding="utf-8")
+        not_indexed = asyncio.run(serve_module.get_symbol(token, path="secret.cpp", name="hidden"))
+        self.assertEqual(not_indexed.status_code, 404)
+        self.assertEqual(not_indexed.body.decode("utf-8"), "ERROR: file is not indexed or not readable")
+
+    def test_symbol_extracts_class_block(self) -> None:
+        source = (
+            "class Processor {\n"
+            "public:\n"
+            "  void run() {\n"
+            "    int value = 1;\n"
+            "  }\n"
+            "};\n"
+            "\n"
+            "void other() {}\n"
+        ).encode("utf-8")
+        token = self._ingest_sample({"src/plugin.hpp": source})
+
+        response = asyncio.run(serve_module.get_symbol(token, path="src/plugin.hpp", name="Processor"))
+        self.assertEqual(response.status_code, 200)
+        body = response.body.decode("utf-8")
+        self.assertIn("# src/plugin.hpp symbol: Processor lines 1-6", body)
+        self.assertIn("1| class Processor {", body)
+        self.assertIn("6| };", body)
+        self.assertNotIn("8| void other() {}", body)
+
     def test_index_pagination(self) -> None:
         token = self._ingest_sample()
 
