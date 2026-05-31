@@ -10,6 +10,8 @@ class MvpDocsTestCase(unittest.TestCase):
         content = doc_path.read_text(encoding="utf-8")
 
         required_snippets = [
+            "初期運用は「ローカル起動 + 一時トンネル（ngrok等）」に固定する",
+            "Post-MVP",
             "uvicorn app.main:app --reload --port 8000",
             "curl -i http://localhost:8000/health",
             'curl -i -X POST http://localhost:8000/ingest \\',
