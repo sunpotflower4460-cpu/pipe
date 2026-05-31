@@ -120,6 +120,7 @@ class IngestTestCase(unittest.TestCase):
         self.assertEqual(readme_entry["hash"], hashlib.sha256(b"# sample\n").hexdigest())
         self.assertIn("T", readme_entry["updated_at"])
         self.assertIn("generated_at", index)
+        self.assertTrue(index["change_history"])
         self.assertEqual(index["change_history"][0]["change"], "added")
         self.assertEqual(
             index["errors"],

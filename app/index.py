@@ -159,20 +159,14 @@ def build_index(workspace_dir: Path) -> None:
         else:
             previous_hash = previous.get("hash")
             current_hash = current.get("hash")
-            change = (
-                "modified"
-                if previous_hash != current_hash
-                or previous.get("lines") != current.get("lines")
-                or previous.get("bytes") != current.get("bytes")
-                else None
-            )
+            change = "modified" if previous_hash != current_hash else None
         if change is None:
             continue
         lines = current.get("lines")
-        bytes_count = current.get("bytes")
+        byte_count = current.get("bytes")
         updated_at = current.get("updated_at")
         file_hash = current.get("hash")
-        if not isinstance(lines, int) or not isinstance(bytes_count, int):
+        if not isinstance(lines, int) or not isinstance(byte_count, int):
             continue
         if not isinstance(updated_at, str):
             updated_at = generated_at
@@ -181,7 +175,7 @@ def build_index(workspace_dir: Path) -> None:
                 "path": file_path,
                 "change": change,
                 "lines": lines,
-                "bytes": bytes_count,
+                "bytes": byte_count,
                 "hash": file_hash if isinstance(file_hash, str) else "",
                 "updated_at": updated_at,
                 "changed_at": generated_at,
@@ -192,10 +186,10 @@ def build_index(workspace_dir: Path) -> None:
         if file_path in current_files:
             continue
         lines = previous.get("lines")
-        bytes_count = previous.get("bytes")
+        byte_count = previous.get("bytes")
         updated_at = previous.get("updated_at")
         file_hash = previous.get("hash")
-        if not isinstance(lines, int) or not isinstance(bytes_count, int):
+        if not isinstance(lines, int) or not isinstance(byte_count, int):
             continue
         if not isinstance(updated_at, str):
             updated_at = generated_at
@@ -204,7 +198,7 @@ def build_index(workspace_dir: Path) -> None:
                 "path": file_path,
                 "change": "deleted",
                 "lines": lines,
-                "bytes": bytes_count,
+                "bytes": byte_count,
                 "hash": file_hash if isinstance(file_hash, str) else "",
                 "updated_at": updated_at,
                 "changed_at": generated_at,
