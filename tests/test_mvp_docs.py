@@ -19,6 +19,7 @@ class MvpDocsTestCase(unittest.TestCase):
             "ngrok http 8000",
             "ngrok-skip-browser-warning",
             '/revoke?token=${TOKEN}',
+            "/t/not-a-real-token/index",
             "403",
         ]
 

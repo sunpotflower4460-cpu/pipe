@@ -178,6 +178,18 @@ curl -i "http://localhost:8000/t/${TOKEN}/index"
 - revoke後は同じtokenで再アクセスできない
 - revoke後、`workspace/{token}/` が削除されるか、少なくとも配信経路から到達不能になる
 
+## 9. 無効tokenの確認
+
+```bash
+curl -i "http://localhost:8000/t/not-a-real-token/index"
+```
+
+確認すること:
+
+- `403`
+- `content-type: text/plain; charset=utf-8`
+- 無効tokenでも JSON や HTML ではなく plain text エラーになる
+
 ## 合格条件
 
 - `/health` が plain text で動く
