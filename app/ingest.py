@@ -70,18 +70,43 @@ def _create_workspace_dir() -> tuple[str, Path]:
     raise RuntimeError("failed to allocate workspace directory")
 
 
-def _is_supported_repository_url(repository_url: str) -> bool:
+def _sanitize_repository_url(repository_url: str) -> str | None:
     parsed = urlparse(repository_url.strip())
     if parsed.scheme != "https":
-        return False
+        return None
     if not parsed.netloc or parsed.username or parsed.password:
-        return False
-    return True
+        return None
+    if parsed.query or parsed.fragment or parsed.params:
+        return None
+    if not parsed.hostname:
+        return None
+    if not re.fullmatch(
+        r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?)*",
+        parsed.hostname,
+    ):
+        return None
+    if not parsed.path or not re.fullmatch(r"/[A-Za-z0-9._/-]+", parsed.path):
+        return None
+    if any(segment in {"", ".", ".."} for segment in parsed.path.split("/")[1:]):
+        return None
+
+    netloc = parsed.hostname
+    try:
+        port = parsed.port
+    except ValueError:
+        return None
+    if port is not None:
+        netloc = f"{netloc}:{port}"
+    return f"https://{netloc}{parsed.path}"
 
 
 def _clone_repository(repository_url: str, destination: Path, access_token: str | None) -> bool:
-    command = ["git", "clone", "--depth", "1", repository_url, str(destination)]
-    env = os.environ.copy()
+    command = ["git", "clone", "--depth", "1", "--", repository_url, str(destination)]
+    env = {
+        key: value
+        for key in ("PATH", "HOME", "LANG", "SSL_CERT_FILE", "SSL_CERT_DIR")
+        if (value := os.environ.get(key)) is not None
+    }
     env["GIT_TERMINAL_PROMPT"] = "0"
     if access_token:
         env["GIT_CONFIG_COUNT"] = "1"
@@ -171,9 +196,10 @@ async def ingest_repo(
     repository_url: str = Form(...),
     access_token: str | None = Form(default=None),
 ) -> PlainTextResponse:
-    repository_url = repository_url.strip()
-    access_token = access_token.strip() if access_token else None
-    if not _is_supported_repository_url(repository_url):
+    sanitized_repository_url = _sanitize_repository_url(repository_url)
+    stripped_access_token = access_token.strip() if access_token else None
+    access_token = stripped_access_token if stripped_access_token else None
+    if sanitized_repository_url is None:
         return error("invalid repository url", 400)
 
     try:
@@ -181,7 +207,7 @@ async def ingest_repo(
     except RuntimeError:
         return error("failed to allocate workspace", 500)
 
-    if not _clone_repository(repository_url, workspace_dir, access_token):
+    if not _clone_repository(sanitized_repository_url, workspace_dir, access_token):
         shutil.rmtree(workspace_dir, ignore_errors=True)
         return error("failed to clone repository", 400)
 

@@ -7,6 +7,7 @@ import unittest
 import zipfile
 from pathlib import Path
 from unittest import mock
+from urllib.parse import urlunsplit
 
 from starlette.datastructures import Headers, UploadFile
 
@@ -135,15 +136,15 @@ class IngestTestCase(unittest.TestCase):
         def fake_clone(command: list[str], check: bool, capture_output: bool, env: dict[str, str]):
             self.assertFalse(check)
             self.assertTrue(capture_output)
-            self.assertEqual(command[:4], ["git", "clone", "--depth", "1"])
+            self.assertEqual(command[:5], ["git", "clone", "--depth", "1", "--"])
             self.assertNotIn(access_token, " ".join(command))
-            self.assertEqual(command[4], "https://github.com/example/example.git")
+            self.assertEqual(command[5], "https://github.com/example/example.git")
             self.assertEqual(env["GIT_TERMINAL_PROMPT"], "0")
             self.assertEqual(env["GIT_CONFIG_COUNT"], "1")
             self.assertEqual(env["GIT_CONFIG_KEY_0"], "http.extraHeader")
             self.assertEqual(env["GIT_CONFIG_VALUE_0"], "Authorization: " + "Bearer " + access_token)
 
-            destination = Path(command[5])
+            destination = Path(command[6])
             (destination / ".git").mkdir(parents=True, exist_ok=True)
             (destination / ".git" / "config").write_text("secret", encoding="utf-8")
             (destination / "src").mkdir(parents=True, exist_ok=True)
@@ -179,7 +180,7 @@ class IngestTestCase(unittest.TestCase):
         self.assertEqual(file_scheme.status_code, 400)
         self.assertEqual(file_scheme.body.decode("utf-8"), "ERROR: invalid repository url")
 
-        credential_url = "https://" + "user:pass@" + "github.com/example/example.git"
+        credential_url = urlunsplit(("https", "user:pass@github.com", "/example/example.git", "", ""))
         embedded_credentials = asyncio.run(
             ingest_module.ingest_repo(
                 repository_url=credential_url,
@@ -188,6 +189,29 @@ class IngestTestCase(unittest.TestCase):
         )
         self.assertEqual(embedded_credentials.status_code, 400)
         self.assertEqual(embedded_credentials.body.decode("utf-8"), "ERROR: invalid repository url")
+
+    def test_ingest_repo_blank_access_token_omits_auth_header(self) -> None:
+        def fake_clone(command: list[str], check: bool, capture_output: bool, env: dict[str, str]):
+            self.assertFalse(check)
+            self.assertTrue(capture_output)
+            self.assertEqual(command[:5], ["git", "clone", "--depth", "1", "--"])
+            self.assertNotIn("GIT_CONFIG_COUNT", env)
+            self.assertNotIn("GIT_CONFIG_KEY_0", env)
+            self.assertNotIn("GIT_CONFIG_VALUE_0", env)
+
+            destination = Path(command[6])
+            (destination / "README.md").write_text("# sample\n", encoding="utf-8")
+            return subprocess.CompletedProcess(command, 0, stdout=b"", stderr=b"")
+
+        with mock.patch.dict("app.ingest.os.environ", {}, clear=True):
+            with mock.patch("app.ingest.subprocess.run", side_effect=fake_clone):
+                response = asyncio.run(
+                    ingest_module.ingest_repo(
+                        repository_url="https://github.com/example/example.git",
+                        access_token="   ",
+                    )
+                )
+        self.assertEqual(response.status_code, 200)
 
     def test_ingest_repo_clone_failure_returns_generic_error_and_cleans_workspace(self) -> None:
         with mock.patch(
