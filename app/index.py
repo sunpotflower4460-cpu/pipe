@@ -1,5 +1,7 @@
 import json
 import os
+from datetime import datetime, timezone
+import hashlib
 from pathlib import Path, PurePosixPath
 
 EXCLUDED_DIRECTORIES = {
@@ -76,6 +78,25 @@ def build_index(workspace_dir: Path) -> None:
     errors: list[dict[str, str]] = []
     total_lines = 0
     total_bytes = 0
+    generated_at = datetime.now(timezone.utc).isoformat()
+    index_path = workspace_dir / "index.json"
+    previous_files: dict[str, dict[str, int | str | bool]] = {}
+    previous_history: list[dict[str, int | str]] = []
+
+    if index_path.is_file():
+        try:
+            previous_index = json.loads(index_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, AttributeError):
+            previous_index = {}
+        for item in previous_index.get("files", []):
+            if not isinstance(item, dict):
+                continue
+            path = item.get("path")
+            if isinstance(path, str):
+                previous_files[path] = item
+        raw_history = previous_index.get("change_history", [])
+        if isinstance(raw_history, list):
+            previous_history = [item for item in raw_history if isinstance(item, dict)]
 
     for root, dirs, file_names in os.walk(workspace_dir):
         dirs[:] = [name for name in dirs if name not in EXCLUDED_DIRECTORIES]
@@ -107,25 +128,93 @@ def build_index(workspace_dir: Path) -> None:
             byte_count = len(payload)
             total_lines += line_count
             total_bytes += byte_count
+            try:
+                updated_at = datetime.fromtimestamp(path.stat().st_mtime, tz=timezone.utc).isoformat()
+            except OSError:
+                updated_at = generated_at
             files.append(
                 {
                     "path": normalized_path,
                     "lines": line_count,
                     "bytes": byte_count,
+                    "hash": hashlib.sha256(payload).hexdigest(),
+                    "updated_at": updated_at,
                     "readable": True,
                 }
             )
 
     files.sort(key=lambda item: str(item["path"]))
     errors.sort(key=lambda item: item["path"])
+    current_files = {
+        str(item["path"]): item
+        for item in files
+        if isinstance(item.get("path"), str)
+    }
+    changes: list[dict[str, int | str]] = []
+
+    for file_path, current in current_files.items():
+        previous = previous_files.get(file_path)
+        if previous is None:
+            change = "added"
+        else:
+            previous_hash = previous.get("hash")
+            current_hash = current.get("hash")
+            change = "modified" if previous_hash != current_hash else None
+        if change is None:
+            continue
+        lines = current.get("lines")
+        byte_count = current.get("bytes")
+        updated_at = current.get("updated_at")
+        file_hash = current.get("hash")
+        if not isinstance(lines, int) or not isinstance(byte_count, int):
+            continue
+        if not isinstance(updated_at, str):
+            updated_at = generated_at
+        changes.append(
+            {
+                "path": file_path,
+                "change": change,
+                "lines": lines,
+                "bytes": byte_count,
+                "hash": file_hash if isinstance(file_hash, str) else "",
+                "updated_at": updated_at,
+                "changed_at": generated_at,
+            }
+        )
+
+    for file_path, previous in previous_files.items():
+        if file_path in current_files:
+            continue
+        lines = previous.get("lines")
+        byte_count = previous.get("bytes")
+        updated_at = previous.get("updated_at")
+        file_hash = previous.get("hash")
+        if not isinstance(lines, int) or not isinstance(byte_count, int):
+            continue
+        if not isinstance(updated_at, str):
+            updated_at = generated_at
+        changes.append(
+            {
+                "path": file_path,
+                "change": "deleted",
+                "lines": lines,
+                "bytes": byte_count,
+                "hash": file_hash if isinstance(file_hash, str) else "",
+                "updated_at": updated_at,
+                "changed_at": generated_at,
+            }
+        )
+
+    changes.sort(key=lambda item: str(item["path"]))
     index_data = {
         "files": files,
         "errors": errors,
         "total_files": len(files),
         "total_lines": total_lines,
         "total_bytes": total_bytes,
+        "generated_at": generated_at,
+        "change_history": previous_history + changes,
     }
-    index_path = workspace_dir / "index.json"
     index_path.write_text(
         json.dumps(index_data, ensure_ascii=False, indent=2),
         encoding="utf-8",

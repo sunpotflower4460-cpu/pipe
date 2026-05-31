@@ -10,6 +10,7 @@ from pathlib import Path
 from starlette.datastructures import Headers, UploadFile
 
 import app.ingest as ingest_module
+import app.index as index_module
 import app.serve as serve_module
 import app.tokens as tokens_module
 
@@ -261,6 +262,54 @@ class TokenRoutesTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 403)
         self.assertEqual(response.headers["content-type"], "text/plain; charset=utf-8")
         self.assertIn("ERROR: invalid or expired token", response.body.decode("utf-8"))
+
+    def test_changes_reports_added_modified_deleted(self) -> None:
+        token = self._ingest_sample(
+            {
+                "src/main.py": b"print('ok')\n",
+                "README.md": b"# sample\n",
+                "docs/keep.txt": b"keep\n",
+            }
+        )
+        workspace = self.workspace_root / token
+        first_index = json.loads((workspace / "index.json").read_text(encoding="utf-8"))
+        since = first_index["generated_at"]
+
+        (workspace / "src/main.py").write_text("print('changed')\n", encoding="utf-8")
+        (workspace / "README.md").unlink()
+        (workspace / "docs/new.txt").write_text("new\n", encoding="utf-8")
+        (workspace / ".env").write_text("SECRET=1\n", encoding="utf-8")
+        index_module.build_index(workspace)
+
+        response = asyncio.run(serve_module.get_changes(token, since=since))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"], "text/plain; charset=utf-8")
+        body = response.body.decode("utf-8")
+        self.assertIn("# Changed files since", body)
+        self.assertIn("src/main.py | modified | 1 lines", body)
+        self.assertIn("README.md | deleted | 1 lines", body)
+        self.assertIn("docs/new.txt | added | 1 lines", body)
+        self.assertNotIn(".env", body)
+        self.assertIn("Total changed files: 3", body)
+
+    def test_changes_no_changes_and_invalid_token(self) -> None:
+        token = self._ingest_sample()
+        since = datetime.now(timezone.utc).isoformat()
+
+        no_changes = asyncio.run(serve_module.get_changes(token, since=since))
+        self.assertEqual(no_changes.status_code, 200)
+        self.assertEqual(no_changes.headers["content-type"], "text/plain; charset=utf-8")
+        self.assertIn("No changes.", no_changes.body.decode("utf-8"))
+
+        invalid_token = asyncio.run(serve_module.get_changes("not-a-real-token", since=since))
+        self.assertEqual(invalid_token.status_code, 403)
+        self.assertEqual(invalid_token.headers["content-type"], "text/plain; charset=utf-8")
+        self.assertEqual(invalid_token.body.decode("utf-8"), "ERROR: invalid or expired token")
+
+        invalid_since = asyncio.run(serve_module.get_changes(token, since="not-iso8601"))
+        self.assertEqual(invalid_since.status_code, 400)
+        self.assertEqual(invalid_since.headers["content-type"], "text/plain; charset=utf-8")
+        self.assertEqual(invalid_since.body.decode("utf-8"), "ERROR: invalid since")
 
     def test_revoke_makes_workspace_unreachable(self) -> None:
         token = self._ingest_sample()

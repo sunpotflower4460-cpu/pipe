@@ -1,5 +1,6 @@
 import json
 import re
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 
 from fastapi import APIRouter, Query
@@ -66,6 +67,21 @@ def _parse_line_number(value: str | int | None, default_value: int) -> int | Non
     if parsed < 1:
         return None
     return parsed
+
+
+def _parse_iso8601(value: str) -> datetime | None:
+    candidate = value.strip()
+    if not candidate:
+        return None
+    if candidate.endswith("Z"):
+        candidate = candidate[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(candidate)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
 
 
 def _find_symbol_range(raw_lines: list[str], symbol_name: str) -> tuple[int, int] | None:
@@ -171,6 +187,63 @@ async def get_index(
     output_lines.append(f"Total size: {total_size_kb} KB")
 
     return plain_text("\n".join(output_lines))
+
+
+@router.get("/t/{token}/changes")
+async def get_changes(token: str, since: str = Query(...)) -> PlainTextResponse:
+    workspace = _resolve_workspace(token)
+    if workspace is None:
+        return error("invalid or expired token", 403)
+
+    since_dt = _parse_iso8601(since)
+    if since_dt is None:
+        return error("invalid since", 400)
+
+    index_path = workspace / "index.json"
+    if not index_path.is_file():
+        return error("index not found. Please ingest a zip first.", 404)
+
+    try:
+        data = json.loads(index_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return error("index not found. Please ingest a zip first.", 404)
+
+    history = data.get("change_history", [])
+    changes: list[dict[str, str | int]] = []
+    if isinstance(history, list):
+        for item in history:
+            if not isinstance(item, dict):
+                continue
+            path = item.get("path")
+            change = item.get("change")
+            lines = item.get("lines")
+            changed_at = item.get("changed_at")
+            if (
+                not isinstance(path, str)
+                or not isinstance(change, str)
+                or not isinstance(lines, int)
+                or not isinstance(changed_at, str)
+            ):
+                continue
+            changed_at_dt = _parse_iso8601(changed_at)
+            if changed_at_dt is None or changed_at_dt <= since_dt:
+                continue
+            changes.append({"path": path, "change": change, "lines": lines, "changed_at": changed_at})
+
+    latest_by_path: dict[str, dict[str, str | int]] = {}
+    for item in sorted(changes, key=lambda entry: str(entry["changed_at"])):
+        latest_by_path[str(item["path"])] = item
+    selected = [latest_by_path[path] for path in sorted(latest_by_path)]
+
+    lines = [f"# Changed files since {since}", ""]
+    if not selected:
+        lines.append("No changes.")
+        return plain_text("\n".join(lines))
+
+    for item in selected:
+        lines.append(f"{item['path']} | {item['change']} | {item['lines']} lines")
+    lines.extend(["", "---", f"Total changed files: {len(selected)}"])
+    return plain_text("\n".join(lines))
 
 
 @router.get("/t/{token}/file")
