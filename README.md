@@ -84,13 +84,10 @@ MVPで作るもの
 - GET /t/{token}/file?path=&from=&to=
 - Claude等での実読確認
 
-MVPでは作らないもの
+現時点で作らないもの
 
-- GET /t/{token}/symbol
-- リポジトリclone方式
 - 自動 git pull
 - Webhook
-- GET /t/{token}/changes
 - 常設サーバー運用
 - ログインフォーム
 - Cookie認証
@@ -139,11 +136,11 @@ GET /t/{token}/file?path=&from=&to=  ★最重要
 - 切った場合は末尾に必ず：--- 続きは from=601&to=1200 で取得 ---
 - path はワークスペース直下に正規化し、外部参照を拒否。
 
-GET /t/{token}/symbol?path=&name=  （MVP後）
+GET /t/{token}/symbol?path=&name=
 関数・クラス単位で該当範囲だけ抽出して返す。
 簡易方式（正規表現＋波括弧の対応カウント）で可。返却時に行範囲を明記。
 
-GET /t/{token}/changes?since=  （MVP後）
+GET /t/{token}/changes?since=
 前回以降に更新されたファイル一覧。継続レビュー用。
 
 POST /revoke?token=
@@ -153,7 +150,7 @@ POST /revoke?token=
 
 - トークンは secrets.token_urlsafe(32)（256bit相当）。推測不能にする。
 - トークンに有効期限を持たせる（既定7日）。期限切れ・無効は 403。
-- .git/・build/・node_modules/・.env・鍵類は配信対象から既定除外。
+- .git/・build/・dist/・node_modules/・.env・鍵類は配信対象から既定除外。
 - バイナリは配信対象外（フォント・音源・画像が漏れない）。
 - リポジトリ clone 方式で受け取った認証情報は、配信にもログにも残さない。
 - URL が漏れると中身も漏れる。 チャットに貼る相手以外に URL を渡さない。
@@ -173,6 +170,7 @@ code-relay/
 │  ├─ index.py           # テキスト/バイナリ判定・インデックス生成
 │  ├─ serve.py           # /index, /file, /symbol, /changes
 │  ├─ tokens.py          # トークン生成・検証・失効・有効期限
+│  ├─ responses.py       # text/plain レスポンスヘルパー（plain_text / error）
 │  └─ config.py          # 除外パターン・上限行数などの定数
 ├─ workspace/            # token ごとに展開（git管理外）
 ├─ tokens.json           # 発行トークン（git管理外）
@@ -180,7 +178,7 @@ code-relay/
 └─ README.md
 実装順（MVP → 継続運用）
 
-MVP（まずここまで）:
+MVP（完了）:
 1. 最小サーバー（/health が text/plain を返す）
 2. ZIP 取り込み（POST /ingest・パストラバーサル対策）
 3. トークン生成・検証・失効・有効期限
@@ -189,10 +187,14 @@ MVP（まずここまで）:
 6. GET /t/{token}/file（行範囲・行番号・上限・続き案内）★最重要
 7. 受け入れテスト（Claude 実読確認）
 
-継続運用（MVP後）:
+継続運用（実装済み）:
 8. GET /symbol（関数単位抽出）
-9. リポジトリ clone 取り込み
-10. 更新自動反映・GET /changes
+9. リポジトリ clone 取り込み（POST /ingest-repo）
+10. GET /changes（変更差分取得）
+
+未着手（Post-MVP）:
+- 更新自動反映（git pull 連携）
+- 常設サーバー化
 
 受け入れ条件（完成判定）
 
