@@ -4,7 +4,7 @@ from pathlib import Path, PurePosixPath
 from fastapi import APIRouter, Query
 from fastapi.responses import PlainTextResponse
 
-from app.config import DEFAULT_FILE_FROM, DEFAULT_FILE_TO, MAX_FILE_RESPONSE_LINES
+from app.config import DEFAULT_FILE_FROM, DEFAULT_FILE_TO, MAX_FILE_RESPONSE_LINES, MAX_INDEX_RESPONSE_FILES
 from app.responses import error, plain_text
 from app.tokens import resolve_workspace_for_access, revoke_token
 
@@ -35,35 +35,58 @@ async def revoke(token: str = Query(...)) -> PlainTextResponse:
 
 
 @router.get("/t/{token}/index")
-async def get_index(token: str) -> PlainTextResponse:
+async def get_index(
+    token: str,
+    from_index: int = Query(1, alias="from"),
+    to_index: int = Query(MAX_INDEX_RESPONSE_FILES, alias="to"),
+) -> PlainTextResponse:
     workspace = _resolve_workspace(token)
     if workspace is None:
         return error("invalid or expired token", 403)
 
     index_path = workspace / "index.json"
     if not index_path.is_file():
-        return error("invalid or expired token", 403)
+        return error("index not found. Please ingest a zip first.", 404)
 
     try:
         data = json.loads(index_path.read_text(encoding="utf-8"))
         files = data.get("files", [])
     except (OSError, json.JSONDecodeError, AttributeError):
-        return error("invalid or expired token", 403)
+        return error("index not found. Please ingest a zip first.", 404)
 
-    lines: list[str] = []
-    total_lines = 0
-    for item in files:
+    if from_index < 1 or to_index < 1 or to_index < from_index:
+        return error("invalid range", 400)
+
+    actual_to = min(to_index, from_index + MAX_INDEX_RESPONSE_FILES - 1, len(files))
+    selected = files[from_index - 1 : actual_to]
+
+    output_lines: list[str] = ["# Code Relay Index", ""]
+    for item in selected:
         path = item.get("path")
         line_count = item.get("lines")
         size_bytes = item.get("bytes")
         if not isinstance(path, str) or not isinstance(line_count, int) or not isinstance(size_bytes, int):
             continue
         size_kb = max(1, (size_bytes + 1023) // 1024)
-        lines.append(f"{path} | {line_count} lines | {size_kb}KB")
-        total_lines += line_count
+        output_lines.append(f"{path} | {line_count} lines | {size_kb} KB")
 
-    lines.append(f"TOTAL {len(lines)} files | {total_lines} lines")
-    return plain_text("\n".join(lines))
+    if len(files) > actual_to:
+        next_from = actual_to + 1
+        next_to = next_from + MAX_INDEX_RESPONSE_FILES - 1
+        output_lines.append(f"--- 続きは from={next_from}&to={next_to} で取得 ---")
+
+    total_files = data.get("total_files", len(files))
+    total_lines_sum = data.get("total_lines", 0)
+    total_bytes = data.get("total_bytes", 0)
+    total_size_kb = (total_bytes + 1023) // 1024
+
+    output_lines.append("")
+    output_lines.append("---")
+    output_lines.append(f"Total files: {total_files}")
+    output_lines.append(f"Total lines: {total_lines_sum}")
+    output_lines.append(f"Total size: {total_size_kb} KB")
+
+    return plain_text("\n".join(output_lines))
 
 
 @router.get("/t/{token}/file")

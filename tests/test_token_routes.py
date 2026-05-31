@@ -61,15 +61,41 @@ class TokenRoutesTestCase(unittest.TestCase):
     def test_token_access_and_content_type(self) -> None:
         token = self._ingest_sample()
 
-        index_response = asyncio.run(serve_module.get_index(token))
+        index_response = asyncio.run(serve_module.get_index(token, from_index=1, to_index=500))
         self.assertEqual(index_response.status_code, 200)
         self.assertEqual(index_response.headers["content-type"], "text/plain; charset=utf-8")
-        self.assertIn("TOTAL", index_response.body.decode("utf-8"))
+        body = index_response.body.decode("utf-8")
+        self.assertIn("# Code Relay Index", body)
+        self.assertIn("Total files:", body)
+        self.assertIn("Total lines:", body)
+        self.assertIn("Total size:", body)
+        self.assertIn("README.md | 1 lines | 1 KB", body)
+        self.assertIn("src/main.py | 1 lines | 1 KB", body)
 
         file_response = asyncio.run(serve_module.get_file(token, path="src/main.py", from_line=1, to_line=600))
         self.assertEqual(file_response.status_code, 200)
         self.assertEqual(file_response.headers["content-type"], "text/plain; charset=utf-8")
         self.assertIn("1| print('ok')", file_response.body.decode("utf-8"))
+
+    def test_index_pagination(self) -> None:
+        token = self._ingest_sample()
+
+        response = asyncio.run(serve_module.get_index(token, from_index=1, to_index=1))
+        self.assertEqual(response.status_code, 200)
+        body = response.body.decode("utf-8")
+        self.assertIn("README.md", body)
+        self.assertNotIn("src/main.py", body)
+        self.assertIn("--- 続きは from=2&to=", body)
+
+    def test_index_not_found_returns_404(self) -> None:
+        token = self._ingest_sample()
+        workspace = self.workspace_root / token
+        (workspace / "index.json").unlink()
+
+        response = asyncio.run(serve_module.get_index(token))
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.headers["content-type"], "text/plain; charset=utf-8")
+        self.assertIn("ERROR: index not found", response.body.decode("utf-8"))
 
     def test_invalid_token_returns_plain_text_403(self) -> None:
         response = asyncio.run(serve_module.get_index("not-a-real-token"))
