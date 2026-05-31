@@ -1,5 +1,6 @@
 import io
 import asyncio
+import json
 import tempfile
 import unittest
 import zipfile
@@ -86,6 +87,45 @@ class IngestTestCase(unittest.TestCase):
         self.assertIn("ERROR: unsafe zip entry path:", body)
         self.assertFalse(any(ingest_module.WORKSPACE_ROOT.glob("*")))
         self.assertFalse((ingest_module.WORKSPACE_ROOT.parent / "secret.txt").exists())
+
+    def test_build_index_excludes_binary_secret_and_records_utf8_errors(self) -> None:
+        payload = make_zip(
+            {
+                "src/main.py": b"print('ok')\n",
+                "README.md": b"# sample\n",
+                ".env": b"SECRET=1\n",
+                "font.ttf": b"font-bytes",
+                "audio.wav": b"audio-bytes",
+                "image.png": b"image-bytes",
+                "node_modules/foo/index.js": b"console.log('x')\n",
+                "legacy/unknown.txt": b"\xff\xfe\xfd",
+            }
+        )
+        status_code, _, body = self.call_ingest("sample.zip", payload, "application/zip")
+        self.assertEqual(status_code, 200)
+        token = body.strip().splitlines()[0].split("=", 1)[1]
+
+        index = json.loads((ingest_module.WORKSPACE_ROOT / token / "index.json").read_text(encoding="utf-8"))
+        files = index["files"]
+        self.assertEqual([item["path"] for item in files], ["README.md", "src/main.py"])
+        self.assertEqual(index["total_files"], 2)
+        self.assertEqual(index["total_lines"], 2)
+        self.assertEqual(index["total_bytes"], len(b"# sample\n") + len(b"print('ok')\n"))
+        self.assertTrue(all(item["readable"] is True for item in files))
+        self.assertEqual(
+            index["errors"],
+            [{"path": "legacy/unknown.txt", "reason": "utf8_decode_failed"}],
+        )
+
+        indexed_paths = {item["path"] for item in files}
+        self.assertNotIn(".env", indexed_paths)
+        self.assertNotIn("font.ttf", indexed_paths)
+        self.assertNotIn("audio.wav", indexed_paths)
+        self.assertNotIn("image.png", indexed_paths)
+        self.assertNotIn("node_modules/foo/index.js", indexed_paths)
+        for path in indexed_paths.union(item["path"] for item in index["errors"]):
+            self.assertFalse(path.startswith("/"))
+            self.assertNotIn("..", Path(path).parts)
 
 
 if __name__ == "__main__":
