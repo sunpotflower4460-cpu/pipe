@@ -23,7 +23,10 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException) 
         422: "invalid request",
         500: "internal server error",
     }
-    detail = exc.detail if isinstance(exc.detail, str) else messages.get(exc.status_code, "error")
+    if isinstance(exc.detail, str):
+        detail = exc.detail
+    else:
+        detail = messages.get(exc.status_code, "error")
     return error(detail, exc.status_code)
 
 
