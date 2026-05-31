@@ -1,11 +1,14 @@
 import io
+import os
 import re
 import shutil
 import stat
+import subprocess
 import zipfile
 from pathlib import Path, PurePosixPath
+from urllib.parse import urlparse
 
-from fastapi import APIRouter, File, UploadFile
+from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import PlainTextResponse
 
 from app.config import (
@@ -65,6 +68,30 @@ def _create_workspace_dir() -> tuple[str, Path]:
             continue
         return token, workspace_dir
     raise RuntimeError("failed to allocate workspace directory")
+
+
+def _is_supported_repository_url(repository_url: str) -> bool:
+    parsed = urlparse(repository_url.strip())
+    if parsed.scheme != "https":
+        return False
+    if not parsed.netloc or parsed.username or parsed.password:
+        return False
+    return True
+
+
+def _clone_repository(repository_url: str, destination: Path, access_token: str | None) -> bool:
+    command = ["git", "clone", "--depth", "1", repository_url, str(destination)]
+    env = os.environ.copy()
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    if access_token:
+        env["GIT_CONFIG_COUNT"] = "1"
+        env["GIT_CONFIG_KEY_0"] = "http.extraHeader"
+        env["GIT_CONFIG_VALUE_0"] = "Authorization: " + "Bearer " + access_token
+    try:
+        result = subprocess.run(command, check=False, capture_output=True, env=env)
+    except OSError:
+        return False
+    return result.returncode == 0
 
 
 @router.post("/ingest")
@@ -134,6 +161,36 @@ async def ingest(file: UploadFile = File(...)) -> PlainTextResponse:
         raise
     finally:
         archive.close()
+
+    body = f"TOKEN={token}\nINDEX=/t/{token}/index"
+    return plain_text(body, status_code=200)
+
+
+@router.post("/ingest-repo")
+async def ingest_repo(
+    repository_url: str = Form(...),
+    access_token: str | None = Form(default=None),
+) -> PlainTextResponse:
+    repository_url = repository_url.strip()
+    access_token = access_token.strip() if access_token else None
+    if not _is_supported_repository_url(repository_url):
+        return error("invalid repository url", 400)
+
+    try:
+        token, workspace_dir = _create_workspace_dir()
+    except RuntimeError:
+        return error("failed to allocate workspace", 500)
+
+    if not _clone_repository(repository_url, workspace_dir, access_token):
+        shutil.rmtree(workspace_dir, ignore_errors=True)
+        return error("failed to clone repository", 400)
+
+    try:
+        build_index(workspace_dir)
+        register_token(token, workspace_dir)
+    except Exception:
+        shutil.rmtree(workspace_dir, ignore_errors=True)
+        raise
 
     body = f"TOKEN={token}\nINDEX=/t/{token}/index"
     return plain_text(body, status_code=200)
