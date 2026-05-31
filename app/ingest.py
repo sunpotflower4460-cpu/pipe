@@ -8,7 +8,13 @@ from pathlib import Path, PurePosixPath
 from fastapi import APIRouter, File, UploadFile
 from fastapi.responses import PlainTextResponse
 
-from app.config import MAX_UNCOMPRESSED_BYTES, MAX_ZIP_BYTES, MAX_ZIP_ENTRIES, WORKSPACE_ROOT
+from app.config import (
+    MAX_UNCOMPRESSED_BYTES,
+    MAX_WORKSPACE_ALLOCATION_RETRIES,
+    MAX_ZIP_BYTES,
+    MAX_ZIP_ENTRIES,
+    WORKSPACE_ROOT,
+)
 from app.index import build_index
 from app.responses import error, plain_text
 from app.tokens import generate_token
@@ -18,20 +24,28 @@ router = APIRouter()
 _WINDOWS_DRIVE_PATTERN = re.compile(r"^[a-zA-Z]:")
 
 
+def _normalized_member_path(name: str) -> PurePosixPath:
+    return PurePosixPath(name.replace("\\", "/"))
+
+
+def _workspace_path_for_entry(name: str, workspace_dir: Path) -> Path:
+    return workspace_dir / Path(*_normalized_member_path(name).parts)
+
+
 def _is_unsafe_entry_path(name: str, workspace_dir: Path) -> bool:
     normalized = name.replace("\\", "/")
-    path = PurePosixPath(normalized)
+    path = _normalized_member_path(name)
 
     if not normalized or normalized.startswith("/") or path.is_absolute():
         return True
     if _WINDOWS_DRIVE_PATTERN.match(normalized):
         return True
-    if any(part == ".." for part in path.parts):
+    if any(part in {"", ".", ".."} for part in path.parts):
         return True
 
-    target_path = (workspace_dir / Path(*path.parts)).resolve()
+    target_path = _workspace_path_for_entry(name, workspace_dir).resolve()
     workspace_realpath = workspace_dir.resolve()
-    if target_path != workspace_realpath and workspace_realpath not in target_path.parents:
+    if workspace_realpath not in target_path.parents:
         return True
     return False
 
@@ -39,6 +53,18 @@ def _is_unsafe_entry_path(name: str, workspace_dir: Path) -> bool:
 def _is_symlink_entry(entry: zipfile.ZipInfo) -> bool:
     mode = entry.external_attr >> 16
     return stat.S_IFMT(mode) == stat.S_IFLNK
+
+
+def _create_workspace_dir() -> tuple[str, Path]:
+    for _ in range(MAX_WORKSPACE_ALLOCATION_RETRIES):
+        token = generate_token()
+        workspace_dir = WORKSPACE_ROOT / token
+        try:
+            workspace_dir.mkdir(parents=True, exist_ok=False)
+        except FileExistsError:
+            continue
+        return token, workspace_dir
+    raise RuntimeError("failed to allocate workspace directory")
 
 
 @router.post("/ingest")
@@ -56,9 +82,10 @@ async def ingest(file: UploadFile = File(...)) -> PlainTextResponse:
     except zipfile.BadZipFile:
         return error("invalid zip file", 400)
 
-    token = generate_token()
-    workspace_dir = WORKSPACE_ROOT / token
-    workspace_dir.mkdir(parents=True, exist_ok=False)
+    try:
+        token, workspace_dir = _create_workspace_dir()
+    except RuntimeError:
+        return error("failed to allocate workspace", 500)
 
     def cleanup_error(message: str) -> PlainTextResponse:
         shutil.rmtree(workspace_dir, ignore_errors=True)
@@ -91,11 +118,11 @@ async def ingest(file: UploadFile = File(...)) -> PlainTextResponse:
 
         for entry in entries:
             if entry.is_dir():
-                target_dir = workspace_dir / Path(*PurePosixPath(entry.filename.replace("\\", "/")).parts)
+                target_dir = _workspace_path_for_entry(entry.filename, workspace_dir)
                 target_dir.mkdir(parents=True, exist_ok=True)
                 continue
 
-            destination = workspace_dir / Path(*PurePosixPath(entry.filename.replace("\\", "/")).parts)
+            destination = _workspace_path_for_entry(entry.filename, workspace_dir)
             destination.parent.mkdir(parents=True, exist_ok=True)
             with archive.open(entry, "r") as src, destination.open("wb") as dst:
                 shutil.copyfileobj(src, dst)

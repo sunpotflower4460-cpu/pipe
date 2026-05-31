@@ -21,9 +21,11 @@ def make_zip(entries: dict[str, bytes]) -> bytes:
 class IngestTestCase(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp_dir = tempfile.TemporaryDirectory()
+        self.original_workspace_root = ingest_module.WORKSPACE_ROOT
         ingest_module.WORKSPACE_ROOT = Path(self.tmp_dir.name) / "workspace"
 
     def tearDown(self) -> None:
+        ingest_module.WORKSPACE_ROOT = self.original_workspace_root
         self.tmp_dir.cleanup()
 
     def call_ingest(self, filename: str, payload: bytes, content_type: str) -> tuple[int, str, str]:
@@ -45,7 +47,7 @@ class IngestTestCase(unittest.TestCase):
         )
         status_code, content_type, body = self.call_ingest("sample.zip", payload, "application/zip")
         self.assertEqual(status_code, 200)
-        self.assertTrue(content_type.startswith("text/plain; charset=utf-8"))
+        self.assertEqual(content_type, "text/plain; charset=utf-8")
         lines = body.strip().splitlines()
         self.assertEqual(len(lines), 2)
         token = lines[0].split("=", 1)[1]
@@ -71,6 +73,7 @@ class IngestTestCase(unittest.TestCase):
         self.assertEqual(status_code, 400)
         self.assertIn("ERROR: unsafe zip entry path:", body)
         self.assertFalse(any(ingest_module.WORKSPACE_ROOT.glob("*")))
+        self.assertFalse((ingest_module.WORKSPACE_ROOT.parent / "secret.txt").exists())
 
 
 if __name__ == "__main__":
