@@ -46,8 +46,8 @@ class TokenRoutesTestCase(unittest.TestCase):
         tokens_module.TOKENS_FILE = self.original_tokens_file
         self.tmp_dir.cleanup()
 
-    def _ingest_sample(self) -> str:
-        payload = make_zip({"src/main.py": b"print('ok')\n", "README.md": b"# sample\n"})
+    def _ingest_sample(self, entries: dict[str, bytes] | None = None) -> str:
+        payload = make_zip(entries or {"src/main.py": b"print('ok')\n", "README.md": b"# sample\n"})
         upload_file = UploadFile(
             file=io.BytesIO(payload),
             filename="sample.zip",
@@ -57,6 +57,9 @@ class TokenRoutesTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         token_line = response.body.decode("utf-8").splitlines()[0]
         return token_line.split("=", 1)[1]
+
+    def _as_plain_lines(self, response_body: bytes) -> list[str]:
+        return response_body.decode("utf-8").splitlines()
 
     def test_token_access_and_content_type(self) -> None:
         token = self._ingest_sample()
@@ -75,7 +78,69 @@ class TokenRoutesTestCase(unittest.TestCase):
         file_response = asyncio.run(serve_module.get_file(token, path="src/main.py", from_line=1, to_line=600))
         self.assertEqual(file_response.status_code, 200)
         self.assertEqual(file_response.headers["content-type"], "text/plain; charset=utf-8")
-        self.assertIn("1| print('ok')", file_response.body.decode("utf-8"))
+        file_body = file_response.body.decode("utf-8")
+        self.assertIn("# src/main.py lines 1-1", file_body)
+        self.assertIn("1| print('ok')", file_body)
+
+    def test_file_defaults_and_continuation_hint(self) -> None:
+        line_count = 700
+        long_file = "".join(f"line {number}\n" for number in range(1, line_count + 1)).encode("utf-8")
+        token = self._ingest_sample({"src/large.py": long_file})
+
+        response = asyncio.run(serve_module.get_file(token, path="src/large.py", from_line=None, to_line=None))
+        self.assertEqual(response.status_code, 200)
+        lines = self._as_plain_lines(response.body)
+        self.assertEqual(lines[0], "# src/large.py lines 1-600")
+        self.assertEqual(lines[2], "  1| line 1")
+        self.assertEqual(lines[601], "600| line 600")
+        self.assertEqual(lines[602], "--- 続きは from=601&to=1200 で取得 ---")
+
+    def test_file_hard_cap_is_800_lines(self) -> None:
+        line_count = 2000
+        long_file = "".join(f"line {number}\n" for number in range(1, line_count + 1)).encode("utf-8")
+        token = self._ingest_sample({"src/large.py": long_file})
+
+        response = asyncio.run(serve_module.get_file(token, path="src/large.py", from_line=801, to_line=5000))
+        self.assertEqual(response.status_code, 200)
+        body = response.body.decode("utf-8")
+        self.assertIn("# src/large.py lines 801-1600", body)
+        self.assertIn(" 801| line 801", body)
+        self.assertIn("1600| line 1600", body)
+        self.assertIn("--- 続きは from=1601&to=2200 で取得 ---", body)
+
+    def test_file_requires_indexed_path(self) -> None:
+        token = self._ingest_sample()
+        workspace = self.workspace_root / token
+        (workspace / "secret.txt").write_text("secret", encoding="utf-8")
+
+        response = asyncio.run(serve_module.get_file(token, path="secret.txt", from_line=1, to_line=10))
+        self.assertEqual(response.status_code, 404)
+        self.assertIn("ERROR: file is not indexed or not readable", response.body.decode("utf-8"))
+
+    def test_file_rejects_unsafe_path(self) -> None:
+        token = self._ingest_sample()
+
+        response = asyncio.run(serve_module.get_file(token, path="../tokens.json", from_line=1, to_line=20))
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("ERROR: unsafe path", response.body.decode("utf-8"))
+
+    def test_file_plain_text_errors_for_missing_path_and_invalid_ranges(self) -> None:
+        token = self._ingest_sample()
+
+        missing_path = asyncio.run(serve_module.get_file(token, path=None))
+        self.assertEqual(missing_path.status_code, 400)
+        self.assertEqual(missing_path.headers["content-type"], "text/plain; charset=utf-8")
+        self.assertEqual(missing_path.body.decode("utf-8"), "ERROR: missing path")
+
+        invalid_range = asyncio.run(serve_module.get_file(token, path="README.md", from_line="200", to_line="100"))
+        self.assertEqual(invalid_range.status_code, 400)
+        self.assertEqual(invalid_range.headers["content-type"], "text/plain; charset=utf-8")
+        self.assertEqual(invalid_range.body.decode("utf-8"), "ERROR: invalid line range")
+
+        invalid_type = asyncio.run(serve_module.get_file(token, path="README.md", from_line="abc", to_line="def"))
+        self.assertEqual(invalid_type.status_code, 400)
+        self.assertEqual(invalid_type.headers["content-type"], "text/plain; charset=utf-8")
+        self.assertEqual(invalid_type.body.decode("utf-8"), "ERROR: invalid line range")
 
     def test_index_pagination(self) -> None:
         token = self._ingest_sample()

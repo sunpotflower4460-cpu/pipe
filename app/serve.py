@@ -15,8 +15,14 @@ def _resolve_workspace(token: str) -> Path | None:
     return resolve_workspace_for_access(token)
 
 
-def _resolve_safe_file_path(workspace: Path, requested_path: str) -> Path | None:
+def _normalize_requested_path(requested_path: str) -> PurePosixPath | None:
     normalized = PurePosixPath(requested_path.replace("\\", "/"))
+    if normalized.is_absolute() or any(part in {"", ".", ".."} for part in normalized.parts):
+        return None
+    return normalized
+
+
+def _resolve_safe_file_path(workspace: Path, normalized: PurePosixPath) -> Path | None:
     if normalized.is_absolute() or any(part in {"", ".", ".."} for part in normalized.parts):
         return None
 
@@ -25,6 +31,43 @@ def _resolve_safe_file_path(workspace: Path, requested_path: str) -> Path | None
     if candidate != workspace_resolved and workspace_resolved not in candidate.parents:
         return None
     return candidate
+
+
+def _is_indexed_readable_file(workspace: Path, normalized_path: str) -> bool:
+    index_path = workspace / "index.json"
+    if not index_path.is_file():
+        return False
+
+    try:
+        index_data = json.loads(index_path.read_text(encoding="utf-8"))
+        files = index_data.get("files", [])
+    except (OSError, json.JSONDecodeError, AttributeError):
+        return False
+
+    for entry in files:
+        if not isinstance(entry, dict):
+            continue
+        if entry.get("path") == normalized_path and entry.get("readable") is True:
+            return True
+    return False
+
+
+def _parse_line_number(value: str | int | None, default_value: int) -> int | None:
+    if value is None:
+        parsed = default_value
+    elif isinstance(value, int):
+        parsed = value
+    else:
+        candidate = value.strip()
+        if not candidate:
+            return None
+        try:
+            parsed = int(candidate, 10)
+        except ValueError:
+            return None
+    if parsed < 1:
+        return None
+    return parsed
 
 
 @router.post("/revoke")
@@ -92,33 +135,53 @@ async def get_index(
 @router.get("/t/{token}/file")
 async def get_file(
     token: str,
-    path: str = Query(...),
-    from_line: int = Query(DEFAULT_FILE_FROM, alias="from"),
-    to_line: int = Query(DEFAULT_FILE_TO, alias="to"),
+    path: str | None = Query(None),
+    from_line: str | int | None = Query(None, alias="from"),
+    to_line: str | int | None = Query(None, alias="to"),
 ) -> PlainTextResponse:
     workspace = _resolve_workspace(token)
     if workspace is None:
         return error("invalid or expired token", 403)
 
-    if from_line < 1 or to_line < 1 or to_line < from_line:
-        return error("invalid range", 400)
+    if path is None or not path.strip():
+        return error("missing path", 400)
 
-    target_path = _resolve_safe_file_path(workspace, path)
-    if target_path is None or not target_path.is_file():
-        return error("file not found", 404)
+    normalized_path = _normalize_requested_path(path.strip())
+    if normalized_path is None:
+        return error("unsafe path", 400)
+
+    resolved_from = _parse_line_number(from_line, DEFAULT_FILE_FROM)
+    if resolved_from is None:
+        return error("invalid line range", 400)
+    default_to = resolved_from + (DEFAULT_FILE_TO - DEFAULT_FILE_FROM)
+    resolved_to = _parse_line_number(to_line, default_to)
+    if resolved_to is None or resolved_to < resolved_from:
+        return error("invalid line range", 400)
+
+    target_path = _resolve_safe_file_path(workspace, normalized_path)
+    if target_path is None:
+        return error("unsafe path", 400)
+
+    normalized_path_str = normalized_path.as_posix()
+    if not target_path.is_file() or not _is_indexed_readable_file(workspace, normalized_path_str):
+        return error("file is not indexed or not readable", 404)
 
     try:
         raw_lines = target_path.read_text(encoding="utf-8").splitlines()
-    except UnicodeDecodeError:
-        return error("binary file", 400)
+    except (OSError, UnicodeDecodeError):
+        return error("file is not indexed or not readable", 404)
 
-    actual_to = min(to_line, from_line + MAX_FILE_RESPONSE_LINES - 1, len(raw_lines))
-    selected_lines = raw_lines[from_line - 1 : actual_to]
-    rendered = [f"{number}| {line}" for number, line in enumerate(selected_lines, start=from_line)]
+    actual_to = min(resolved_to, resolved_from + MAX_FILE_RESPONSE_LINES - 1, len(raw_lines))
+    selected_lines = raw_lines[resolved_from - 1 : actual_to]
+    line_number_width = max(len(str(actual_to)), len(str(resolved_from)))
+    rendered = [f"# {normalized_path_str} lines {resolved_from}-{actual_to}", ""]
+    rendered.extend(
+        f"{number:>{line_number_width}}| {line}" for number, line in enumerate(selected_lines, start=resolved_from)
+    )
 
     if len(raw_lines) > actual_to:
         next_from = actual_to + 1
-        next_to = next_from + MAX_FILE_RESPONSE_LINES - 1
+        next_to = next_from + (DEFAULT_FILE_TO - DEFAULT_FILE_FROM)
         rendered.append(f"--- 続きは from={next_from}&to={next_to} で取得 ---")
 
     return plain_text("\n".join(rendered))
