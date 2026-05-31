@@ -59,7 +59,7 @@ TEXT_SNIFF_BYTES = 4096
 def _normalized_index_path(path: Path, workspace_dir: Path) -> str | None:
     relative = path.relative_to(workspace_dir).as_posix()
     normalized = PurePosixPath(relative)
-    if normalized.is_absolute() or any(part in {"", ".", ".."} for part in normalized.parts):
+    if normalized.is_absolute() or any(part in {".", ".."} for part in normalized.parts):
         return None
     return normalized.as_posix()
 
@@ -94,7 +94,7 @@ def build_index(workspace_dir: Path) -> None:
                 errors.append({"path": normalized_path, "reason": "read_failed"})
                 continue
 
-            if b"\x00" in payload[:TEXT_SNIFF_BYTES]:
+            if b"\x00" in memoryview(payload)[:TEXT_SNIFF_BYTES]:
                 continue
 
             try:

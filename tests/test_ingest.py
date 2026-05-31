@@ -98,7 +98,7 @@ class IngestTestCase(unittest.TestCase):
                 "audio.wav": b"audio-bytes",
                 "image.png": b"image-bytes",
                 "node_modules/foo/index.js": b"console.log('x')\n",
-                "legacy/unknown.txt": b"\xff\xfe\xfd",
+                "legacy/unknown.txt": b"\x80\x81\x82",
             }
         )
         status_code, _, body = self.call_ingest("sample.zip", payload, "application/zip")
