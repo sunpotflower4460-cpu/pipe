@@ -1,5 +1,26 @@
 Code Relay — Claude が読めるコード中継サーバー
 
+起動手順
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
+```
+
+動作確認（別ターミナルで）:
+
+```bash
+# ヘルスチェック
+curl -i http://localhost:8000/health
+# 期待: 200 / content-type: text/plain; charset=utf-8 / 本文: ok
+
+# 存在しないエンドポイント
+curl -i http://localhost:8000/not-found
+# 期待: 404 / content-type: text/plain; charset=utf-8 / JSON ではない本文
+```
+
 privateリポジトリのソースを公開せずに、Claude（チャット経由のクローラー）が
 確実に読める形で中継するための軽量サーバー。
 
