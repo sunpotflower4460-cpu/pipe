@@ -58,6 +58,21 @@ curl -i http://localhost:8000/health
 - `content-type: text/plain; charset=utf-8`
 - 本文が `ok`
 
+## 2.1 FastAPIデフォルトJSONエラーの確認（最重要）
+
+```bash
+curl -i http://localhost:8000/not-found
+curl -i "http://localhost:8000/t/not-a-real-token/file"
+curl -i "http://localhost:8000/t/not-a-real-token/file?path=README.md&from=abc&to=def"
+```
+
+確認すること:
+
+- JSON（`{"detail": ...}`）ではない
+- `content-type: text/plain; charset=utf-8`
+- 本文が `ERROR: ...` の plain text
+  - 例: `ERROR: not found` / `ERROR: invalid request`
+
 ## 3. ZIP取り込み
 
 ```bash

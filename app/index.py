@@ -21,6 +21,15 @@ EXCLUDED_FILE_NAMES = {
     ".env",
     ".env.local",
     ".env.production",
+    "id_rsa",
+    "id_rsa.pub",
+    "id_dsa",
+    "id_dsa.pub",
+    "id_ecdsa",
+    "id_ecdsa.pub",
+    "id_ed25519",
+    "id_ed25519.pub",
+    "authorized_keys",
 }
 
 EXCLUDED_FILE_EXTENSIONS = {
@@ -58,6 +67,11 @@ EXCLUDED_FILE_EXTENSIONS = {
 TEXT_SNIFF_BYTES = 4096
 
 
+def _looks_like_private_key(payload: bytes) -> bool:
+    sniff = memoryview(payload)[:TEXT_SNIFF_BYTES].tobytes()
+    return b"-----BEGIN " in sniff and b"PRIVATE KEY-----" in sniff
+
+
 def _normalized_index_path(path: Path, workspace_dir: Path) -> str | None:
     relative = path.relative_to(workspace_dir).as_posix()
     normalized = PurePosixPath(relative)
@@ -68,7 +82,7 @@ def _normalized_index_path(path: Path, workspace_dir: Path) -> str | None:
 
 def _is_excluded_file(path: Path) -> bool:
     name = path.name.lower()
-    if name in EXCLUDED_FILE_NAMES:
+    if name in EXCLUDED_FILE_NAMES or name.startswith(".env."):
         return True
     return path.suffix.lower() in EXCLUDED_FILE_EXTENSIONS
 
@@ -115,6 +129,8 @@ def build_index(workspace_dir: Path) -> None:
                 errors.append({"path": normalized_path, "reason": "read_failed"})
                 continue
 
+            if _looks_like_private_key(payload):
+                continue
             if b"\x00" in memoryview(payload)[:TEXT_SNIFF_BYTES]:
                 continue
 

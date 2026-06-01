@@ -98,6 +98,10 @@ class IngestTestCase(unittest.TestCase):
                 "src/main.py": b"print('ok')\n",
                 "README.md": b"# sample\n",
                 ".env": b"SECRET=1\n",
+                ".env.development": b"SECRET=2\n",
+                "keys/id_rsa": b"PRIVATE KEY",
+                "keys/id_rsa.pub": b"PUBLIC KEY",
+                "secrets/deploy_key": b"-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----\n",
                 "font.ttf": b"font-bytes",
                 "audio.wav": b"audio-bytes",
                 "image.png": b"image-bytes",
@@ -129,6 +133,10 @@ class IngestTestCase(unittest.TestCase):
 
         indexed_paths = {item["path"] for item in files}
         self.assertNotIn(".env", indexed_paths)
+        self.assertNotIn(".env.development", indexed_paths)
+        self.assertNotIn("keys/id_rsa", indexed_paths)
+        self.assertNotIn("keys/id_rsa.pub", indexed_paths)
+        self.assertNotIn("secrets/deploy_key", indexed_paths)
         self.assertNotIn("font.ttf", indexed_paths)
         self.assertNotIn("audio.wav", indexed_paths)
         self.assertNotIn("image.png", indexed_paths)
