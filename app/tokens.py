@@ -54,6 +54,32 @@ def register_token(token: str, workspace_dir: Path) -> None:
     _save_tokens(tokens)
 
 
+def update_token_metadata(
+    token: str,
+    *,
+    name: str | None = None,
+    source_type: str | None = None,
+    repository_url: str | None = None,
+) -> bool:
+    tokens = _load_tokens()
+    record = tokens.get(token)
+    if not record:
+        return False
+
+    if name is not None:
+        stripped_name = name.strip()
+        if stripped_name:
+            record["name"] = stripped_name
+    if source_type is not None:
+        record["source_type"] = source_type
+    if repository_url is not None:
+        record["repository_url"] = repository_url
+
+    tokens[token] = record
+    _save_tokens(tokens)
+    return True
+
+
 def revoke_token(token: str) -> bool:
     tokens = _load_tokens()
     record = tokens.get(token)
@@ -67,6 +93,20 @@ def revoke_token(token: str) -> bool:
     tokens[token] = record
     _save_tokens(tokens)
     return True
+
+
+def delete_token(token: str) -> bool:
+    tokens = _load_tokens()
+    record = tokens.pop(token, None)
+    if record is None:
+        return False
+    _remove_workspace(record)
+    _save_tokens(tokens)
+    return True
+
+
+def list_tokens() -> dict[str, dict[str, Any]]:
+    return _load_tokens()
 
 
 def resolve_workspace_for_access(token: str) -> Path | None:

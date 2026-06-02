@@ -4,10 +4,12 @@ from fastapi.responses import PlainTextResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from app.responses import error, plain_text
+from app.admin import router as admin_router
 from app.ingest import router as ingest_router
 from app.serve import router as serve_router
 
 app = FastAPI()
+app.include_router(admin_router)
 app.include_router(ingest_router)
 app.include_router(serve_router)
 

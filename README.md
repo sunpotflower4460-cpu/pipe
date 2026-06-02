@@ -105,7 +105,17 @@ MVPで作るもの
 
 エンドポイント仕様
 
+AI向け配信エンドポイント（/t/{token}/... と /health, /revoke）は、
 すべて text/plain; charset=utf-8 で返す。
+
+管理画面（人間向けHTML）
+
+- GET / または GET /admin
+  - ZIP / リポジトリURL の登録フォーム
+  - 保存済みパイプ一覧
+  - index / file / symbol / changes のコピー用URL表示
+  - revoke / delete 操作
+  - ※ read-only token 入力値は保存・表示・ログ出力しない
 
 GET /health
 死活確認。ok を返すだけ。
