@@ -14,6 +14,7 @@ from starlette.requests import Request
 import app.admin as admin_module
 import app.ingest as ingest_module
 import app.main as main_module
+import app.serve as serve_module
 import app.tokens as tokens_module
 
 
@@ -58,14 +59,14 @@ class AdminRoutesTestCase(unittest.TestCase):
         admin_module.WORKSPACE_ROOT = self.original_admin_workspace_root
         self.tmp_dir.cleanup()
 
-    def _request(self, path: str = "/admin", method: str = "GET") -> Request:
+    def _request(self, path: str = "/admin", method: str = "GET", query: str = "") -> Request:
         scope = {
             "type": "http",
             "http_version": "1.1",
             "method": method,
             "path": path,
             "headers": [],
-            "query_string": b"",
+            "query_string": query.encode("utf-8"),
             "scheme": "http",
             "server": ("testserver", 80),
             "client": ("testclient", 50000),
@@ -79,8 +80,10 @@ class AdminRoutesTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("text/html", response.headers["content-type"])
         response_text = response.body.decode("utf-8")
-        self.assertIn("中継アプリ", response_text)
-        self.assertIn("最初に開く場所はこの管理画面", response_text)
+        self.assertIn("Code Memo", response_text)
+        self.assertIn("ZIPを追加すると、コードをアプリ内で読めます。", response_text)
+        self.assertIn("ファイルを追加", response_text)
+        self.assertIn("シェア", response_text)
 
         payload = make_zip({"README.md": b"# sample\n", "src/main.py": b"print('ok')\n"})
         upload_file = UploadFile(
@@ -103,14 +106,16 @@ class AdminRoutesTestCase(unittest.TestCase):
         listed = asyncio.run(admin_module.admin_page(self._request()))
         listed_text = listed.body.decode("utf-8")
         self.assertIn("My Zip Pipe", listed_text)
+        self.assertIn("ファイル一覧", listed_text)
+        self.assertIn("隠したファイル", listed_text)
+        self.assertIn("index URLをコピー", listed_text)
+        self.assertIn("テンプレートをコピー", listed_text)
+        self.assertIn("file URLをコピー", listed_text)
         self.assertIn("index URL", listed_text)
-        self.assertIn("次にやること", listed_text)
-        self.assertIn("file URL \u4f8b", listed_text)
+        self.assertIn("file?path=README.md&amp;from=1&amp;to=600", listed_text)
         self.assertIn("symbol URL \u4f8b", listed_text)
         self.assertIn("changes URL \u4f8b", listed_text)
-        self.assertIn("Claudeに貼る文章テンプレート", listed_text)
-        self.assertIn("/file?path=...&amp;from=...&amp;to=...", listed_text)
-        self.assertIn("revoke: このパイプを止めます", listed_text)
+        self.assertIn("AIに貼る文章", listed_text)
 
         data = json.loads(self.tokens_file.read_text(encoding="utf-8"))
         self.assertEqual(len(data), 1)
@@ -118,6 +123,7 @@ class AdminRoutesTestCase(unittest.TestCase):
         self.assertEqual(record["name"], "My Zip Pipe")
         self.assertEqual(record["source_type"], "zip")
         self.assertIn(f"/t/{token}/index", listed_text)
+        self.assertEqual(record["hidden_paths"], [])
 
     def test_admin_repo_create_does_not_store_access_token_and_supports_revoke_delete(self) -> None:
         access_token = "read-only-secret-token"
@@ -165,6 +171,78 @@ class AdminRoutesTestCase(unittest.TestCase):
         self.assertEqual(deleted.status_code, 303)
         deleted_data = json.loads(self.tokens_file.read_text(encoding="utf-8"))
         self.assertNotIn(token, deleted_data)
+
+    def test_admin_can_view_hide_unhide_and_delete_file(self) -> None:
+        payload = make_zip({"README.md": b"# sample\nline2\n", "src/main.py": b"print('ok')\n"})
+        upload_file = UploadFile(
+            file=io.BytesIO(payload),
+            filename="sample.zip",
+            headers=Headers({"content-type": "application/zip"}),
+        )
+        created = asyncio.run(
+            admin_module.create_pipe(
+                request=self._request(method="POST"),
+                name="Memo",
+                source_type="zip",
+                repository_url=None,
+                access_token=None,
+                file=upload_file,
+            )
+        )
+        self.assertEqual(created.status_code, 303)
+
+        token = created.headers["location"].split("token=", 1)[1]
+        viewed = asyncio.run(admin_module.admin_page(self._request(query=f"token={token}&path=README.md")))
+        viewed_text = viewed.body.decode("utf-8")
+        self.assertIn("README.md", viewed_text)
+        self.assertIn("1| # sample", viewed_text)
+        self.assertIn("2| line2", viewed_text)
+        self.assertIn(f"/t/{token}/file?path=README.md&amp;from=1&amp;to=600", viewed_text)
+
+        hidden = asyncio.run(
+            admin_module.hide_file(
+                request=self._request(method="POST"),
+                token=token,
+                path="README.md",
+            )
+        )
+        self.assertEqual(hidden.status_code, 303)
+        hidden_page = asyncio.run(admin_module.admin_page(self._request(query=f"token={token}")))
+        hidden_text = hidden_page.body.decode("utf-8")
+        self.assertNotIn("token=" + token + "&amp;path=README.md", hidden_text)
+        self.assertIn("README.md", hidden_text)
+
+        index_path = self.workspace_root / token / "index.json"
+        index_data = json.loads(index_path.read_text(encoding="utf-8"))
+        readme_entry = next((item for item in index_data["files"] if item["path"] == "README.md"), None)
+        self.assertIsNotNone(readme_entry)
+        self.assertFalse(readme_entry["readable"])
+        hidden_file_response = asyncio.run(serve_module.get_file(token=token, path="README.md", from_line=1, to_line=10))
+        self.assertEqual(hidden_file_response.status_code, 404)
+        self.assertIn("file is not indexed or not readable", hidden_file_response.body.decode("utf-8"))
+
+        unhidden = asyncio.run(
+            admin_module.unhide_file(
+                request=self._request(method="POST"),
+                token=token,
+                path="README.md",
+            )
+        )
+        self.assertEqual(unhidden.status_code, 303)
+        unhidden_page = asyncio.run(admin_module.admin_page(self._request(query=f"token={token}")))
+        self.assertIn("token=" + token + "&amp;path=README.md", unhidden_page.body.decode("utf-8"))
+
+        deleted = asyncio.run(
+            admin_module.delete_file(
+                request=self._request(method="POST"),
+                token=token,
+                path="README.md",
+            )
+        )
+        self.assertEqual(deleted.status_code, 303)
+        self.assertFalse((self.workspace_root / token / "README.md").exists())
+        deleted_index_data = json.loads(index_path.read_text(encoding="utf-8"))
+        self.assertFalse(any(item["path"] == "README.md" for item in deleted_index_data["files"]))
 
 
 if __name__ == "__main__":

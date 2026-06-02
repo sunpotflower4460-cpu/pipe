@@ -60,6 +60,7 @@ def update_token_metadata(
     name: str | None = None,
     source_type: str | None = None,
     repository_url: str | None = None,
+    hidden_paths: list[str] | None = None,
 ) -> bool:
     tokens = _load_tokens()
     record = tokens.get(token)
@@ -74,6 +75,8 @@ def update_token_metadata(
         record["source_type"] = source_type
     if repository_url is not None:
         record["repository_url"] = repository_url
+    if hidden_paths is not None:
+        record["hidden_paths"] = [path for path in hidden_paths if isinstance(path, str) and path]
 
     tokens[token] = record
     _save_tokens(tokens)
