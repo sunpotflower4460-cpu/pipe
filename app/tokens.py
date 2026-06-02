@@ -61,6 +61,8 @@ def update_token_metadata(
     source_type: str | None = None,
     repository_url: str | None = None,
     hidden_paths: list[str] | None = None,
+    folders: list[dict[str, Any]] | None = None,
+    shares: list[dict[str, Any]] | None = None,
 ) -> bool:
     tokens = _load_tokens()
     record = tokens.get(token)
@@ -77,6 +79,10 @@ def update_token_metadata(
         record["repository_url"] = repository_url
     if hidden_paths is not None:
         record["hidden_paths"] = [path for path in hidden_paths if isinstance(path, str) and path]
+    if folders is not None:
+        record["folders"] = [item for item in folders if isinstance(item, dict)]
+    if shares is not None:
+        record["shares"] = [item for item in shares if isinstance(item, dict)]
 
     tokens[token] = record
     _save_tokens(tokens)

@@ -247,6 +247,93 @@ class TokenRoutesTestCase(unittest.TestCase):
         self.assertNotIn("src/main.py", body)
         self.assertIn("--- 続きは from=2&to=", body)
 
+    def test_share_index_and_file_scope(self) -> None:
+        token = self._ingest_sample(
+            {
+                "README.md": b"# sample\n",
+                "Source/PluginProcessor.cpp": b"void process() {}\n",
+                "build/cache.txt": b"temp\n",
+            }
+        )
+        tokens_module.update_token_metadata(
+            token,
+            folders=[
+                {
+                    "id": "source",
+                    "name": "Source",
+                    "paths": ["Source/PluginProcessor.cpp"],
+                    "visible": True,
+                }
+            ],
+            shares=[
+                {
+                    "id": "review-main",
+                    "name": "AIに見せるセット",
+                    "paths": ["README.md", "Source/PluginProcessor.cpp"],
+                    "excluded_paths": ["build/", "hidden files"],
+                }
+            ],
+        )
+
+        response = asyncio.run(serve_module.get_share_index(token, "review-main", from_index=1, to_index=50))
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"], "text/plain; charset=utf-8")
+        body = response.body.decode("utf-8")
+        self.assertIn("# Code Relay Share Index: AIに見せるセット", body)
+        self.assertIn("README.md | 1 lines | 1 KB", body)
+        self.assertIn("Source/PluginProcessor.cpp | 1 lines | 1 KB", body)
+        self.assertNotIn("build/cache.txt", body)
+
+        file_response = asyncio.run(
+            serve_module.get_share_file(token, "review-main", path="Source/PluginProcessor.cpp", from_line=1, to_line=10)
+        )
+        self.assertEqual(file_response.status_code, 200)
+        self.assertEqual(file_response.headers["content-type"], "text/plain; charset=utf-8")
+        self.assertIn("1| void process() {}", file_response.body.decode("utf-8"))
+
+        out_of_scope = asyncio.run(
+            serve_module.get_share_file(token, "review-main", path="build/cache.txt", from_line=1, to_line=10)
+        )
+        self.assertEqual(out_of_scope.status_code, 404)
+        self.assertEqual(out_of_scope.body.decode("utf-8"), "ERROR: file is outside share scope")
+
+    def test_share_respects_hidden_files_and_folder_share_url(self) -> None:
+        token = self._ingest_sample(
+            {
+                "README.md": b"# sample\n",
+                "Source/main.cpp": b"int main(){}\n",
+            }
+        )
+        tokens_module.update_token_metadata(
+            token,
+            folders=[{"id": "source", "name": "Source", "paths": ["Source/main.cpp"], "visible": True}],
+            shares=[
+                {
+                    "id": "ai-set",
+                    "name": "AIに見せるセット",
+                    "paths": ["README.md", "Source/main.cpp"],
+                    "excluded_paths": ["hidden files"],
+                }
+            ],
+        )
+
+        workspace = self.workspace_root / token
+        index = json.loads((workspace / "index.json").read_text(encoding="utf-8"))
+        for item in index["files"]:
+            if item["path"] == "README.md":
+                item["readable"] = False
+        (workspace / "index.json").write_text(json.dumps(index, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        share_response = asyncio.run(serve_module.get_share_index(token, "ai-set", from_index=1, to_index=50))
+        self.assertEqual(share_response.status_code, 200)
+        body = share_response.body.decode("utf-8")
+        self.assertIn("Source/main.cpp", body)
+        self.assertNotIn("README.md", body)
+
+        folder_response = asyncio.run(serve_module.get_share_index(token, "folder-source", from_index=1, to_index=50))
+        self.assertEqual(folder_response.status_code, 200)
+        self.assertIn("Source/main.cpp", folder_response.body.decode("utf-8"))
+
     def test_index_not_found_returns_404(self) -> None:
         token = self._ingest_sample()
         workspace = self.workspace_root / token
