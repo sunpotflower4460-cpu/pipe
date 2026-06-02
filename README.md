@@ -217,6 +217,9 @@ MVP（完了）:
   VPS 等に常駐し git pull 自動反映まで含める。/changes による継続レビュー向き。
   常時口が開くため、トークン運用・有効期限・アクセスログを厳格に。
 
+クラウド常設運用の設定（`PORT`、永続ディスク、`WORKSPACE_DIR`/`TOKENS_PATH`/`BASE_PUBLIC_URL`）は
+`docs/cloud-deploy.md` を参照。
+
 推奨フロー：まずローカル＋トンネリングで MVP を完成させ、Claude が実際に読めることを
 確認してから、必要なら常設へ移す。
 
