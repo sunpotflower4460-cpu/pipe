@@ -592,6 +592,7 @@ def _render_admin_page(request: Request, error_message: str | None = None, info_
             for folder in folders
             if str(folder["id"]) not in {"hidden"}
         )
+        default_excluded_paths_text = "\n".join(DEFAULT_SHARE_EXCLUDED_PATHS)
 
         notebook_block = (
             f"<h2>{escape(name)}</h2>"
@@ -622,7 +623,7 @@ def _render_admin_page(request: Request, error_message: str | None = None, info_
             f"<form id='share-form' method='post' action='/admin/pipes/{quote_plus(selected_token)}/shares/create' style='display:grid;gap:8px;margin:8px 0;'>"
             "<div>選択した複数ファイルだけをシェア</div>"
             "<input type='text' name='name' value='AIに見せるセット' placeholder='セット名' required>"
-            "<label>除外するパス（改行区切り）<textarea name='excluded_paths' rows='3'>build/\nnode_modules/\nhidden files</textarea></label>"
+            f"<label>除外するパス（改行区切り）<textarea name='excluded_paths' rows='3'>{escape(default_excluded_paths_text)}</textarea></label>"
             f"<label>同時に追加するフォルダ<select name='folder_id'>{folder_options}</select></label>"
             "<button type='submit'>AIに見せるセットを作成</button>"
             "</form>"
@@ -804,7 +805,7 @@ async def toggle_folder_visibility(request: Request, token: str, folder_id: str 
     for folder in folders:
         if str(folder["id"]) != normalized_folder_id:
             continue
-        folder["visible"] = not (folder.get("visible") is not False)
+        folder["visible"] = folder.get("visible") is False
         break
     _save_folder_entries(token, folders)
     return RedirectResponse(url=_admin_url(token=token, folder=normalized_folder_id), status_code=303)

@@ -122,8 +122,9 @@ def _resolve_share_paths(token: str, share_id: str, workspace: Path) -> tuple[st
             raw_paths = _normalize_path_list(folder.get("paths"))
             scoped = {path for path in raw_paths if path in indexed_paths}
             if folder_id == "hidden":
+                # Hidden files are explicitly outside AI share scope.
                 scoped = set()
-            if folder_id == "share" and not scoped:
+            elif folder_id == "share" and not scoped:
                 scoped = {
                     path
                     for path in indexed_paths
@@ -159,8 +160,8 @@ def _resolve_share_paths(token: str, share_id: str, workspace: Path) -> tuple[st
         scoped_paths = {
             path
             for path in scoped_paths
-            if not any(
-                path.lower().startswith(excluded_path.rstrip("/"))
+            if all(
+                not path.lower().startswith(excluded_path.rstrip("/"))
                 for excluded_path in excluded
                 if excluded_path.endswith("/")
             )
