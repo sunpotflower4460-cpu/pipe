@@ -12,6 +12,8 @@ from app.ingest import ingest, ingest_repo
 from app.tokens import delete_token, list_tokens, revoke_token, update_token_metadata
 
 router = APIRouter()
+CHANGES_EXAMPLE_LOOKBACK_DAYS = 1
+TOKEN_DISPLAY_PREFIX_LENGTH = 8
 
 
 def _utc_now() -> datetime:
@@ -100,7 +102,7 @@ def _token_from_response(body: str) -> str | None:
 
 def _render_admin_page(request: Request, error_message: str | None = None) -> HTMLResponse:
     base_url = _public_base(request)
-    now_for_changes = (_utc_now() - timedelta(days=1)).isoformat()
+    changes_since_timestamp = (_utc_now() - timedelta(days=CHANGES_EXAMPLE_LOOKBACK_DAYS)).isoformat()
 
     rows: list[str] = []
     records = sorted(
@@ -116,7 +118,7 @@ def _render_admin_page(request: Request, error_message: str | None = None) -> HT
             source_type = "unknown"
         name = record.get("name")
         if not isinstance(name, str) or not name.strip():
-            name = token[:8]
+            name = token[:TOKEN_DISPLAY_PREFIX_LENGTH]
         repository_url = record.get("repository_url")
         repository_label = (
             f"<div>repository_url: {escape(repository_url)}</div>"
@@ -127,7 +129,7 @@ def _render_admin_page(request: Request, error_message: str | None = None) -> HT
         index_url = f"{base_url}/t/{token}/index"
         file_url = f"{base_url}/t/{token}/file?path=README.md&from=1&to=200"
         symbol_url = f"{base_url}/t/{token}/symbol?path=src/main.py&name=main"
-        changes_url = f"{base_url}/t/{token}/changes?since={quote_plus(now_for_changes)}"
+        changes_url = f"{base_url}/t/{token}/changes?since={quote_plus(changes_since_timestamp)}"
         revoke_disabled = "disabled" if state != "active" else ""
         rows.append(
             "<li>"
@@ -216,7 +218,12 @@ async def create_pipe(
 
     token = _token_from_response(response.body.decode("utf-8"))
     if token is not None:
-        update_token_metadata(token, name=stripped_name, source_type=source_type)
+        update_token_metadata(
+            token,
+            name=stripped_name,
+            source_type=source_type,
+            repository_url=repository_url if source_type == "repo" else None,
+        )
     return RedirectResponse(url="/admin", status_code=303)
 
 

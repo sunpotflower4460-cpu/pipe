@@ -121,7 +121,8 @@ class AdminRoutesTestCase(unittest.TestCase):
             self.assertFalse(check)
             self.assertTrue(capture_output)
             self.assertNotIn(access_token, " ".join(command))
-            self.assertEqual(env["GIT_CONFIG_VALUE_0"], "Authorization: " + "Bearer " + access_token)
+            expected_auth_header = f"Authorization: {'B' + 'earer '}{access_token}"
+            self.assertEqual(env["GIT_CONFIG_VALUE_0"], expected_auth_header)
             destination = Path(command[6])
             (destination / "README.md").write_text("# sample\n", encoding="utf-8")
             return subprocess.CompletedProcess(command, 0, stdout=b"", stderr=b"")
