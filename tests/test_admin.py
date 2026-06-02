@@ -79,7 +79,8 @@ class AdminRoutesTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertIn("text/html", response.headers["content-type"])
         response_text = response.body.decode("utf-8")
-        self.assertIn("安全な中継パイプ", response_text)
+        self.assertIn("中継アプリ", response_text)
+        self.assertIn("最初に開く場所はこの管理画面", response_text)
 
         payload = make_zip({"README.md": b"# sample\n", "src/main.py": b"print('ok')\n"})
         upload_file = UploadFile(
@@ -103,9 +104,13 @@ class AdminRoutesTestCase(unittest.TestCase):
         listed_text = listed.body.decode("utf-8")
         self.assertIn("My Zip Pipe", listed_text)
         self.assertIn("index URL", listed_text)
+        self.assertIn("次にやること", listed_text)
         self.assertIn("file URL \u4f8b", listed_text)
         self.assertIn("symbol URL \u4f8b", listed_text)
         self.assertIn("changes URL \u4f8b", listed_text)
+        self.assertIn("Claudeに貼る文章テンプレート", listed_text)
+        self.assertIn("/file?path=...&amp;from=...&amp;to=...", listed_text)
+        self.assertIn("revoke: このパイプを止めます", listed_text)
 
         data = json.loads(self.tokens_file.read_text(encoding="utf-8"))
         self.assertEqual(len(data), 1)

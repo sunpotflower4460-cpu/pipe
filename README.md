@@ -9,6 +9,8 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
 ```
 
+はじめて使う場合は、先に使い方ガイドを参照してください: [docs/how-to-use.md](docs/how-to-use.md)
+
 動作確認（別ターミナルで）:
 
 ```bash
