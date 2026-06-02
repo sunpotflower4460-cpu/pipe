@@ -29,17 +29,20 @@ class IngestTestCase(unittest.TestCase):
         self.tmp_dir = tempfile.TemporaryDirectory()
         tmp_base = Path(self.tmp_dir.name)
         self.original_workspace_root = ingest_module.WORKSPACE_ROOT
+        self.original_base_public_url = ingest_module.BASE_PUBLIC_URL
         self.original_tokens_base_dir = tokens_module.BASE_DIR
         self.original_tokens_workspace_root = tokens_module.WORKSPACE_ROOT
         self.original_tokens_file = tokens_module.TOKENS_FILE
 
         ingest_module.WORKSPACE_ROOT = tmp_base / "workspace"
+        ingest_module.BASE_PUBLIC_URL = ""
         tokens_module.BASE_DIR = tmp_base
         tokens_module.WORKSPACE_ROOT = ingest_module.WORKSPACE_ROOT
         tokens_module.TOKENS_FILE = tmp_base / "tokens.json"
 
     def tearDown(self) -> None:
         ingest_module.WORKSPACE_ROOT = self.original_workspace_root
+        ingest_module.BASE_PUBLIC_URL = self.original_base_public_url
         tokens_module.BASE_DIR = self.original_tokens_base_dir
         tokens_module.WORKSPACE_ROOT = self.original_tokens_workspace_root
         tokens_module.TOKENS_FILE = self.original_tokens_file
@@ -54,6 +57,12 @@ class IngestTestCase(unittest.TestCase):
         response = asyncio.run(ingest_module.ingest(upload_file))
         body = response.body.decode("utf-8")
         return response.status_code, response.headers["content-type"], body
+
+    def _extract_token_from_body(self, body: str) -> str:
+        for line in body.strip().splitlines():
+            if line.startswith("TOKEN="):
+                return line.split("=", 1)[1]
+        self.fail(f"TOKEN line not found in response body: {body}")
 
     def test_ingest_success(self) -> None:
         payload = make_zip(
@@ -227,6 +236,37 @@ class IngestTestCase(unittest.TestCase):
                     )
                 )
         self.assertEqual(response.status_code, 200)
+
+    def test_ingest_returns_absolute_index_url_when_base_public_url_is_set(self) -> None:
+        ingest_module.BASE_PUBLIC_URL = "https://relay.example.com"
+        payload = make_zip({"README.md": b"# sample\n"})
+
+        status_code, _, body = self.call_ingest("sample.zip", payload, "application/zip")
+
+        self.assertEqual(status_code, 200)
+        token = self._extract_token_from_body(body)
+        self.assertIn(f"INDEX=https://relay.example.com/t/{token}/index", body)
+
+    def test_ingest_repo_returns_absolute_index_url_when_base_public_url_is_set(self) -> None:
+        ingest_module.BASE_PUBLIC_URL = "https://relay.example.com"
+
+        def fake_clone(command: list[str], check: bool, capture_output: bool, env: dict[str, str]):
+            destination = Path(command[6])
+            (destination / "README.md").write_text("# sample\n", encoding="utf-8")
+            return subprocess.CompletedProcess(command, 0, stdout=b"", stderr=b"")
+
+        with mock.patch("app.ingest.subprocess.run", side_effect=fake_clone):
+            response = asyncio.run(
+                ingest_module.ingest_repo(
+                    repository_url="https://github.com/example/example.git",
+                    access_token=None,
+                )
+            )
+
+        self.assertEqual(response.status_code, 200)
+        body = response.body.decode("utf-8")
+        token = self._extract_token_from_body(body)
+        self.assertIn(f"INDEX=https://relay.example.com/t/{token}/index", body)
 
     def test_ingest_repo_clone_failure_returns_generic_error_and_cleans_workspace(self) -> None:
         with mock.patch(

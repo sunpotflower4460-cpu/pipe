@@ -12,6 +12,7 @@ from fastapi import APIRouter, File, Form, UploadFile
 from fastapi.responses import PlainTextResponse
 
 from app.config import (
+    BASE_PUBLIC_URL,
     MAX_UNCOMPRESSED_BYTES,
     MAX_WORKSPACE_ALLOCATION_RETRIES,
     MAX_ZIP_BYTES,
@@ -119,6 +120,13 @@ def _clone_repository(repository_url: str, destination: Path, access_token: str 
     return result.returncode == 0
 
 
+def _index_url(token: str) -> str:
+    path = f"/t/{token}/index"
+    if not BASE_PUBLIC_URL:
+        return path
+    return f"{BASE_PUBLIC_URL}{path}"
+
+
 @router.post("/ingest")
 async def ingest(file: UploadFile = File(...)) -> PlainTextResponse:
     filename = file.filename or ""
@@ -187,7 +195,7 @@ async def ingest(file: UploadFile = File(...)) -> PlainTextResponse:
     finally:
         archive.close()
 
-    body = f"TOKEN={token}\nINDEX=/t/{token}/index"
+    body = f"TOKEN={token}\nINDEX={_index_url(token)}"
     return plain_text(body, status_code=200)
 
 
@@ -218,5 +226,5 @@ async def ingest_repo(
         shutil.rmtree(workspace_dir, ignore_errors=True)
         raise
 
-    body = f"TOKEN={token}\nINDEX=/t/{token}/index"
+    body = f"TOKEN={token}\nINDEX={_index_url(token)}"
     return plain_text(body, status_code=200)
