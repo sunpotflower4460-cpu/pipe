@@ -298,38 +298,44 @@ def _render_admin_page(request: Request, error_message: str | None = None, info_
                     except (OSError, UnicodeDecodeError):
                         selected_file_html = "<p style='color:#b00020;'>テキストとして読み込めませんでした。</p>"
                     else:
-                        actual_to = min(view_to, view_from + MAX_VIEW_LINES - 1, len(raw_lines))
-                        selected = raw_lines[view_from - 1 : actual_to]
-                        line_number_width = len(str(actual_to if selected else view_from))
-                        rendered = "\n".join(
-                            f"{number:>{line_number_width}}| {escape(line)}"
-                            for number, line in enumerate(selected, start=view_from)
-                        )
-                        next_link = ""
-                        if len(raw_lines) > actual_to:
-                            next_from = actual_to + 1
-                            next_to = next_from + (DEFAULT_VIEW_TO - DEFAULT_VIEW_FROM)
-                            next_link = (
-                                f"<p><a href='{escape(_admin_url(token=selected_token, path=selected_file_path_normalized, from_line=next_from, to_line=next_to))}'>"
-                                f"続きを表示 ({next_from}-{next_to})</a></p>"
+                        if view_from > len(raw_lines):
+                            selected_file_html = (
+                                f"<h4>{escape(selected_file_path_normalized)}</h4>"
+                                f"<p style='color:#b00020;'>指定した行範囲（from={view_from}）はファイル行数（{len(raw_lines)}）を超えています。</p>"
                             )
-                        selected_file_html = (
-                            f"<h4>{escape(selected_file_path_normalized)}</h4>"
-                            "<div style='display:flex;gap:8px;flex-wrap:wrap;'>"
-                            f"<form method='post' action='/admin/pipes/{quote_plus(selected_token)}/hide'>"
-                            f"<input type='hidden' name='path' value='{escape(selected_file_path_normalized)}'>"
-                            "<button type='submit'>隠す</button></form>"
-                            f"<form method='post' action='/admin/pipes/{quote_plus(selected_token)}/files/delete' onsubmit='return confirm(\"このファイルを削除します。元に戻せません。\")'>"
-                            f"<input type='hidden' name='path' value='{escape(selected_file_path_normalized)}'>"
-                            "<button type='submit'>削除</button></form>"
-                            "</div>"
-                            f"<p><small>表示行: {view_from}-{actual_to} / 全{len(raw_lines)}行</small></p>"
-                            f"<pre style='white-space:pre;overflow:auto;border:1px solid #ddd;padding:8px;'>{rendered}</pre>"
-                            f"{next_link}"
-                        )
-                        selected_file_url = (
-                            f"{base_url}/t/{selected_token}/file?path={quote_plus(selected_file_path_normalized)}&from=1&to=600"
-                        )
+                        else:
+                            actual_to = min(view_to, view_from + MAX_VIEW_LINES - 1, len(raw_lines))
+                            selected = raw_lines[view_from - 1 : actual_to]
+                            line_number_width = len(str(actual_to if selected else view_from))
+                            rendered = "\n".join(
+                                f"{number:>{line_number_width}}| {escape(line)}"
+                                for number, line in enumerate(selected, start=view_from)
+                            )
+                            next_link = ""
+                            if len(raw_lines) > actual_to:
+                                next_from = actual_to + 1
+                                next_to = next_from + (DEFAULT_VIEW_TO - DEFAULT_VIEW_FROM)
+                                next_link = (
+                                    f"<p><a href='{escape(_admin_url(token=selected_token, path=selected_file_path_normalized, from_line=next_from, to_line=next_to))}'>"
+                                    f"続きを表示 ({next_from}-{next_to})</a></p>"
+                                )
+                            selected_file_html = (
+                                f"<h4>{escape(selected_file_path_normalized)}</h4>"
+                                "<div style='display:flex;gap:8px;flex-wrap:wrap;'>"
+                                f"<form method='post' action='/admin/pipes/{quote_plus(selected_token)}/hide'>"
+                                f"<input type='hidden' name='path' value='{escape(selected_file_path_normalized)}'>"
+                                "<button type='submit'>隠す</button></form>"
+                                f"<form method='post' action='/admin/pipes/{quote_plus(selected_token)}/files/delete' onsubmit='return confirm(\"このファイルを削除します。元に戻せません。\")'>"
+                                f"<input type='hidden' name='path' value='{escape(selected_file_path_normalized)}'>"
+                                "<button type='submit'>削除</button></form>"
+                                "</div>"
+                                f"<p><small>表示行: {view_from}-{actual_to} / 全{len(raw_lines)}行</small></p>"
+                                f"<pre style='white-space:pre;overflow:auto;border:1px solid #ddd;padding:8px;'>{rendered}</pre>"
+                                f"{next_link}"
+                            )
+                            selected_file_url = (
+                                f"{base_url}/t/{selected_token}/file?path={quote_plus(selected_file_path_normalized)}&from=1&to=600"
+                            )
 
         visible_list = "".join(
             f"<li><a href='{escape(_admin_url(token=selected_token, path=path, from_line=1, to_line=DEFAULT_VIEW_TO))}'>{escape(path)}</a></li>"
@@ -534,7 +540,7 @@ async def delete_file(request: Request, token: str, path: str = Form(...)) -> Re
 
         parent = target.parent
         workspace_resolved = workspace.resolve()
-        while parent != workspace_resolved:
+        while parent != workspace_resolved and workspace_resolved in parent.parents:
             try:
                 parent.rmdir()
             except OSError:

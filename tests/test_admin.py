@@ -14,6 +14,7 @@ from starlette.requests import Request
 import app.admin as admin_module
 import app.ingest as ingest_module
 import app.main as main_module
+import app.serve as serve_module
 import app.tokens as tokens_module
 
 
@@ -213,8 +214,12 @@ class AdminRoutesTestCase(unittest.TestCase):
 
         index_path = self.workspace_root / token / "index.json"
         index_data = json.loads(index_path.read_text(encoding="utf-8"))
-        readme_entry = next(item for item in index_data["files"] if item["path"] == "README.md")
+        readme_entry = next((item for item in index_data["files"] if item["path"] == "README.md"), None)
+        self.assertIsNotNone(readme_entry)
         self.assertFalse(readme_entry["readable"])
+        hidden_file_response = asyncio.run(serve_module.get_file(token=token, path="README.md", from_line=1, to_line=10))
+        self.assertEqual(hidden_file_response.status_code, 404)
+        self.assertIn("file is not indexed or not readable", hidden_file_response.body.decode("utf-8"))
 
         unhidden = asyncio.run(
             admin_module.unhide_file(
