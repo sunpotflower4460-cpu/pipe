@@ -21,7 +21,7 @@ from app.config import (
 )
 from app.index import build_index
 from app.responses import error, plain_text
-from app.tokens import generate_token, register_token
+from app.tokens import generate_token, register_token, update_token_metadata
 
 router = APIRouter()
 
@@ -189,6 +189,7 @@ async def ingest(file: UploadFile = File(...)) -> PlainTextResponse:
 
         build_index(workspace_dir)
         register_token(token, workspace_dir)
+        update_token_metadata(token, source_type="zip")
     except Exception:
         shutil.rmtree(workspace_dir, ignore_errors=True)
         raise
@@ -222,6 +223,7 @@ async def ingest_repo(
     try:
         build_index(workspace_dir)
         register_token(token, workspace_dir)
+        update_token_metadata(token, source_type="repo", repository_url=sanitized_repository_url)
     except Exception:
         shutil.rmtree(workspace_dir, ignore_errors=True)
         raise
