@@ -244,6 +244,93 @@ class AdminRoutesTestCase(unittest.TestCase):
         deleted_index_data = json.loads(index_path.read_text(encoding="utf-8"))
         self.assertFalse(any(item["path"] == "README.md" for item in deleted_index_data["files"]))
 
+    def test_admin_can_create_folders_assign_files_and_create_share_set(self) -> None:
+        payload = make_zip({"README.md": b"# sample\n", "Source/main.cpp": b"int main(){}\n"})
+        upload_file = UploadFile(
+            file=io.BytesIO(payload),
+            filename="sample.zip",
+            headers=Headers({"content-type": "application/zip"}),
+        )
+        created = asyncio.run(
+            admin_module.create_pipe(
+                request=self._request(method="POST"),
+                name="Memo",
+                source_type="zip",
+                repository_url=None,
+                access_token=None,
+                file=upload_file,
+            )
+        )
+        self.assertEqual(created.status_code, 303)
+        token = created.headers["location"].split("token=", 1)[1]
+
+        folder_created = asyncio.run(
+            admin_module.create_folder(request=self._request(method="POST"), token=token, name="Review Group")
+        )
+        self.assertEqual(folder_created.status_code, 303)
+
+        assign_scope = {
+            "type": "http",
+            "http_version": "1.1",
+            "method": "POST",
+            "path": f"/admin/pipes/{token}/folders/assign",
+            "headers": [(b"content-type", b"application/x-www-form-urlencoded")],
+            "query_string": b"",
+            "scheme": "http",
+            "server": ("testserver", 80),
+            "client": ("testclient", 50000),
+            "root_path": "",
+            "app": main_module.app,
+        }
+
+        async def assign_receive():
+            return {"type": "http.request", "body": b"paths=README.md&paths=Source/main.cpp&folder_id=review-group", "more_body": False}
+
+        assigned = asyncio.run(
+            admin_module.assign_files_to_folder(
+                request=Request(assign_scope, assign_receive),
+                token=token,
+                folder_id="review-group",
+                path=None,
+            )
+        )
+        self.assertEqual(assigned.status_code, 303)
+
+        share_scope = dict(assign_scope)
+        share_scope["path"] = f"/admin/pipes/{token}/shares/create"
+
+        async def share_receive():
+            return {
+                "type": "http.request",
+                "body": b"paths=README.md&name=AI%E3%81%AB%E8%A6%8B%E3%81%9B%E3%82%8B%E3%82%BB%E3%83%83%E3%83%88&folder_id=review-group&excluded_paths=build%2F%0Anode_modules%2F",
+                "more_body": False,
+            }
+
+        shared = asyncio.run(
+            admin_module.create_share_set(
+                request=Request(share_scope, share_receive),
+                token=token,
+                name="AIに見せるセット",
+                folder_id="review-group",
+                excluded_paths="build/\nnode_modules/",
+            )
+        )
+        self.assertEqual(shared.status_code, 303)
+
+        page = asyncio.run(admin_module.admin_page(self._request(query=f"token={token}&folder=review-group")))
+        body = page.body.decode("utf-8")
+        self.assertIn("フォルダ", body)
+        self.assertIn("このフォルダをAIにシェア", body)
+        self.assertIn("AIに見せるセット", body)
+        self.assertIn(f"/t/{token}/share/folder-review-group/index", body)
+
+        data = json.loads(self.tokens_file.read_text(encoding="utf-8"))
+        record = data[token]
+        self.assertTrue(any(folder["id"] == "review-group" for folder in record["folders"]))
+        review_folder = next(folder for folder in record["folders"] if folder["id"] == "review-group")
+        self.assertEqual(sorted(review_folder["paths"]), ["README.md", "Source/main.cpp"])
+        self.assertTrue(any(share["name"] == "AIに見せるセット" for share in record["shares"]))
+
 
 if __name__ == "__main__":
     unittest.main()
