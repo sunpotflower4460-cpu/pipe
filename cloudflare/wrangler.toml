@@ -1,0 +1,19 @@
+name = "code-memo-cloud"
+main = "src/index.js"
+compatibility_date = "2026-06-05"
+
+[vars]
+PUBLIC_BASE_URL = ""
+
+[[r2_buckets]]
+binding = "CODE_MEMO_BUCKET"
+bucket_name = "code-memo-files"
+preview_bucket_name = "code-memo-files-preview"
+
+[[d1_databases]]
+binding = "CODE_MEMO_DB"
+database_name = "code-memo-db"
+database_id = "REPLACE_WITH_YOUR_D1_DATABASE_ID"
+
+[observability.logs]
+enabled = true
