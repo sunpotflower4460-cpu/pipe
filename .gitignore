@@ -1,4 +1,6 @@
 # Python
+node_modules/
+cloudflare/.wrangler/
 __pycache__/
 *.py[cod]
 *.pyo

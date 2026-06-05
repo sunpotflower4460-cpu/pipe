@@ -11,6 +11,8 @@ uvicorn app.main:app --reload --port 8000
 
 はじめて使う場合は、先に使い方ガイドを参照してください: [docs/how-to-use.md](docs/how-to-use.md)
 
+Cloudflare Workers + R2 + D1 の分離MVPは [cloudflare/README.md](cloudflare/README.md) を参照してください。
+
 動作確認（別ターミナルで）:
 
 ```bash
