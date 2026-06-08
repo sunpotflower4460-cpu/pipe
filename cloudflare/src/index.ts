@@ -39,6 +39,12 @@ async function route(request: Request, env: Env): Promise<Response> {
   const file = url.pathname.match(/^\/t\/([^/]+)\/file$/);
   if (request.method === "GET" && file) return shareFile(request, env, file[1]);
 
+  const rawIndex = url.pathname.match(/^\/raw\/([^/]+)\/index$/);
+  if (request.method === "GET" && rawIndex) return shareIndex(request, env, rawIndex[1]);
+
+  const rawFile = url.pathname.match(/^\/raw\/([^/]+)\/file$/);
+  if (request.method === "GET" && rawFile) return shareFile(request, env, rawFile[1]);
+
   return html(await renderHome(request, env));
 }
 
@@ -107,14 +113,14 @@ async function renderHome(request: Request, env: Env, notice = ""): Promise<stri
   const selected = selectedId ? await getMemo(env, selectedId) : null;
   const selectedPath = url.searchParams.get("path") || "";
   const shareBase = publicOrigin(url, env);
-  const indexUrl = selected ? `${shareBase}/t/${selected.id}/index` : "";
-  const fileUrl = selected && selectedPath ? `${shareBase}/t/${selected.id}/file?path=${encodeURIComponent(selectedPath)}&from=1&to=600` : "";
+  const indexUrl = selected ? `${shareBase}/raw/${selected.id}/index` : "";
+  const fileUrl = selected && selectedPath ? `${shareBase}/raw/${selected.id}/file?path=${encodeURIComponent(selectedPath)}&from=1&to=600` : "";
 
   const memoList = memos.map((m) => `<li><a href="/?id=${m.id}">${escapeHtml(m.name)}</a><br><small>${m.files.filter((f) => !f.hidden && !f.deleted).length} files</small></li>`).join("");
   const fileList = selected ? selected.files.filter((f) => !f.hidden && !f.deleted).map((f) => `<li><a href="/?id=${selected.id}&path=${encodeURIComponent(f.path)}">${escapeHtml(f.path)}</a> <small>${f.lines} lines</small></li>`).join("") : "";
   const hiddenList = selected ? selected.files.filter((f) => f.hidden && !f.deleted).map((f) => `<li>${escapeHtml(f.path)} <form method="post" action="/memos/${selected.id}/unhide" style="display:inline"><input type="hidden" name="path" value="${escapeHtml(f.path)}"><button>戻す</button></form></li>`).join("") : "";
   const bodyView = selected && selectedPath ? await renderFile(env, selected, selectedPath) : "<p>ファイルを選ぶとコード本文が表示されます。</p>";
-  const template = indexUrl ? `以下のCode Memo index URLからコードを確認してください。\nindexには各ファイル本文を読むための file url が入っています。必要なファイルの url を開いて中身を読んでください。\n\n${indexUrl}` : "ZIPを追加するとここにAI用文章が出ます。";
+  const template = indexUrl ? `以下のCode Memo raw index URLからコードを確認してください。\nraw indexには各ファイル本文を読むための raw file url が入っています。必要なファイルの url を開いて中身を読んでください。\n\n${indexUrl}` : "ZIPを追加するとここにAI用文章が出ます。";
 
   return page(appName, `
     <h1>${escapeHtml(appName)}</h1>
@@ -122,7 +128,7 @@ async function renderHome(request: Request, env: Env, notice = ""): Promise<stri
     ${notice ? `<section class="card"><strong>${escapeHtml(notice)}</strong></section>` : ""}
     <section class="card"><h2>ファイルを追加</h2><form id="uploadForm" method="post" enctype="multipart/form-data" action="/memos/create"><label>メモ名<input name="name" value="Code Memo"></label><br><br><label>ZIPファイル<input id="zipInput" type="file" name="file" accept=".zip,application/zip" required></label><br><br><div class="row"><button id="uploadButton">ファイルを追加</button><a class="button" href="#share">シェア</a></div><div id="uploadPanel" class="progress-panel" hidden><div class="progress-label"><span id="uploadStatus">待機中...</span><span id="uploadPercent">0%</span></div><progress id="uploadProgress" max="100" value="0"></progress><small id="uploadHint">アップロード後、ZIPを展開してR2へ保存します。大きいZIPでは少し時間がかかります。</small></div></form></section>
     <section class="card"><h2>メモ</h2><ul>${memoList || "<li>まだありません。</li>"}</ul></section>
-    ${selected ? `<section class="card"><h2>${escapeHtml(selected.name)}</h2><form method="post" action="/memos/${selected.id}/delete" onsubmit="return confirm('このメモを削除します。')"><button>このメモを削除</button></form><h3>ファイル一覧</h3><ul>${fileList || "<li>表示できるファイルがありません。</li>"}</ul><h3>隠したファイル</h3><ul>${hiddenList || "<li>まだありません。</li>"}</ul></section><section class="card"><h2>コード本文</h2>${bodyView}</section><section class="card" id="share"><h2>シェア</h2><label>index URL<input id="indexUrl" readonly value="${escapeHtml(indexUrl)}"></label><button onclick="copyText('indexUrl')">index URLをコピー</button><br><br><label>file URL<input id="fileUrl" readonly value="${escapeHtml(fileUrl)}"></label><button onclick="copyText('fileUrl')">file URLをコピー</button><br><br><label>AIに貼る文章<textarea id="tpl" rows="5" readonly>${escapeHtml(template)}</textarea></label><button onclick="copyText('tpl')">テンプレートをコピー</button></section>` : ""}
+    ${selected ? `<section class="card"><h2>${escapeHtml(selected.name)}</h2><form method="post" action="/memos/${selected.id}/delete" onsubmit="return confirm('このメモを削除します。')"><button>このメモを削除</button></form><h3>ファイル一覧</h3><ul>${fileList || "<li>表示できるファイルがありません。</li>"}</ul><h3>隠したファイル</h3><ul>${hiddenList || "<li>まだありません。</li>"}</ul></section><section class="card"><h2>コード本文</h2>${bodyView}</section><section class="card" id="share"><h2>シェア</h2><label>raw index URL<input id="indexUrl" readonly value="${escapeHtml(indexUrl)}"></label><button onclick="copyText('indexUrl')">raw index URLをコピー</button><br><br><label>raw file URL<input id="fileUrl" readonly value="${escapeHtml(fileUrl)}"></label><button onclick="copyText('fileUrl')">raw file URLをコピー</button><br><br><label>AIに貼る文章<textarea id="tpl" rows="5" readonly>${escapeHtml(template)}</textarea></label><button onclick="copyText('tpl')">テンプレートをコピー</button></section>` : ""}
   `);
 }
 
@@ -147,12 +153,12 @@ async function shareIndex(request: Request, env: Env, id: string): Promise<Respo
   const lines: string[] = [
     `# ${memo.name}`,
     "",
-    "This index includes direct file URLs. Open the url for any file you need to read.",
+    "This raw index includes direct raw file URLs. Open the url for any file you need to read.",
     "Format: FILE / lines / bytes / url",
     "",
   ];
   visible.forEach((f, i) => {
-    const fileUrl = `${shareBase}/t/${id}/file?path=${encodeURIComponent(f.path)}&from=1&to=600`;
+    const fileUrl = `${shareBase}/raw/${id}/file?path=${encodeURIComponent(f.path)}&from=1&to=600`;
     lines.push(`FILE ${i + 1}: ${f.path}`);
     lines.push(`lines: ${f.lines}`);
     lines.push(`bytes: ${f.bytes}`);
