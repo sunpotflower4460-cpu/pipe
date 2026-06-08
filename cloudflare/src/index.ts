@@ -8,11 +8,18 @@ export default {
     if (url.pathname === "/health") {
       return text("ok");
     }
+    if (request.method === "POST" && url.pathname === "/memos/create") {
+      const form = await request.formData();
+      const file = form.get("file");
+      const name = String(form.get("name") || "Code Memo");
+      const fileName = file instanceof File ? file.name : "no file";
+      return html(renderHome(env.APP_NAME || "Code Memo", `受け取り確認: ${name} / ${fileName}`));
+    }
     return html(renderHome(env.APP_NAME || "Code Memo"));
   },
 };
 
-function renderHome(appName: string): string {
+function renderHome(appName: string, notice = ""): string {
   return `<!doctype html>
 <html lang="ja">
 <head>
@@ -32,6 +39,7 @@ function renderHome(appName: string): string {
 <body><main>
   <h1>${escapeHtml(appName)}</h1>
   <p>ZIPを追加して、コードを読めるメモ帳にします。次の更新でCloudflare R2/KV保存とAI共有URLをつなぎます。</p>
+  ${notice ? `<section class="card"><strong>${escapeHtml(notice)}</strong></section>` : ""}
 
   <section class="card">
     <h2>ファイルを追加</h2>
@@ -40,7 +48,7 @@ function renderHome(appName: string): string {
       <label>ZIPファイル<input type="file" name="file" accept=".zip,application/zip"></label><br><br>
       <div class="row"><button type="submit">ファイルを追加</button><a class="button" href="#share">シェア</a></div>
     </form>
-    <p><small>今はUI接続の最小版です。ZIP処理は次のコミットで追加します。</small></p>
+    <p><small>今はアップロード受け口の最小版です。ZIP展開とR2/KV保存は次のコミットで追加します。</small></p>
   </section>
 
   <section class="card" id="share">
