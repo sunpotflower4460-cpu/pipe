@@ -2,7 +2,6 @@ import JSZip from "jszip";
 
 type Env = {
   CODE_MEMO_BUCKET: R2Bucket;
-  CODE_MEMO_KV: KVNamespace;
   APP_NAME?: string;
   MAX_FILE_BYTES?: string;
   MAX_FILES_PER_ZIP?: string;
@@ -16,6 +15,7 @@ type Memo = { id: string; name: string; createdAt: string; updatedAt: string; fi
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     try {
+      if (!env.CODE_MEMO_BUCKET) return html(setupPage(), 500);
       return await route(request, env);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "unknown error";
@@ -27,7 +27,6 @@ export default {
 async function route(request: Request, env: Env): Promise<Response> {
   const url = new URL(request.url);
   if (url.pathname === "/health") return plain("ok");
-
   if (request.method === "POST" && url.pathname === "/memos/create") return createMemo(request, env);
 
   const action = url.pathname.match(/^\/memos\/([^/]+)\/(hide|unhide|delete-file|delete)$/);
@@ -79,7 +78,8 @@ async function changeMemo(request: Request, env: Env, id: string, action: string
   if (!memo) return Response.redirect(url.origin + "/", 303);
   if (action === "delete") {
     await Promise.all(memo.files.map((f) => env.CODE_MEMO_BUCKET.delete(fileKey(id, f.path))));
-    await env.CODE_MEMO_KV.delete(`memo:${id}`);
+    await env.CODE_MEMO_BUCKET.delete(memoKey(id));
+    await removeMemoFromIndex(env, id);
     return Response.redirect(url.origin + "/", 303);
   }
   const form = await request.formData();
@@ -164,23 +164,46 @@ async function shareFile(request: Request, env: Env, id: string): Promise<Respon
 }
 
 async function listMemos(env: Env): Promise<Memo[]> {
-  const list = await env.CODE_MEMO_KV.list({ prefix: "memo:", limit: 100 });
+  const ids = await loadIndex(env);
   const memos: Memo[] = [];
-  for (const key of list.keys) {
-    const memo = await env.CODE_MEMO_KV.get<Memo>(key.name, "json");
+  for (const id of ids) {
+    const memo = await getMemo(env, id);
     if (memo) memos.push(memo);
   }
   return memos.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
 async function getMemo(env: Env, id: string): Promise<Memo | null> {
-  return env.CODE_MEMO_KV.get<Memo>(`memo:${id}`, "json");
+  const obj = await env.CODE_MEMO_BUCKET.get(memoKey(id));
+  if (!obj) return null;
+  try { return JSON.parse(await obj.text()) as Memo; } catch { return null; }
 }
 
 async function saveMemo(env: Env, memo: Memo): Promise<void> {
-  await env.CODE_MEMO_KV.put(`memo:${memo.id}`, JSON.stringify(memo));
+  await env.CODE_MEMO_BUCKET.put(memoKey(memo.id), JSON.stringify(memo), { httpMetadata: { contentType: "application/json; charset=utf-8" } });
+  const ids = await loadIndex(env);
+  if (!ids.includes(memo.id)) {
+    ids.push(memo.id);
+    await saveIndex(env, ids);
+  }
 }
 
+async function loadIndex(env: Env): Promise<string[]> {
+  const obj = await env.CODE_MEMO_BUCKET.get(indexKey());
+  if (!obj) return [];
+  try { const parsed = JSON.parse(await obj.text()); return Array.isArray(parsed) ? parsed.filter((x) => typeof x === "string") : []; } catch { return []; }
+}
+
+async function saveIndex(env: Env, ids: string[]): Promise<void> {
+  await env.CODE_MEMO_BUCKET.put(indexKey(), JSON.stringify(ids), { httpMetadata: { contentType: "application/json; charset=utf-8" } });
+}
+
+async function removeMemoFromIndex(env: Env, id: string): Promise<void> {
+  await saveIndex(env, (await loadIndex(env)).filter((x) => x !== id));
+}
+
+function indexKey(): string { return "memos/index.json"; }
+function memoKey(id: string): string { return `memos/${id}/memo.json`; }
 function fileKey(id: string, path: string): string { return `memos/${id}/files/${path}`; }
 function cleanPath(raw: string): string | null { const p = raw.replaceAll("\\", "/").replace(/^\/+/, ""); if (!p || p.includes("..") || p.startsWith("/")) return null; return p; }
 function skipPath(path: string): boolean { const l = path.toLowerCase(); return l.includes("node_modules/") || l.includes(".git/") || l.includes("/dist/") || l.includes("/build/") || l.endsWith(".png") || l.endsWith(".jpg") || l.endsWith(".jpeg") || l.endsWith(".gif") || l.endsWith(".webp") || l.endsWith(".mp3") || l.endsWith(".wav") || l.endsWith(".zip"); }
@@ -191,4 +214,5 @@ function readInt(raw: string | null | undefined, fallback: number): number { if 
 function plain(body: string, status = 200): Response { return new Response(body, { status, headers: { "content-type": "text/plain; charset=utf-8" } }); }
 function html(body: string, status = 200): Response { return new Response(body, { status, headers: { "content-type": "text/html; charset=utf-8" } }); }
 function escapeHtml(value: unknown): string { return String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\"/g, "&quot;").replace(/'/g, "&#39;"); }
+function setupPage(): string { return page("Code Memo setup", `<h1>Code Memo</h1><section class="card"><h2>R2 binding が未設定です</h2><p>Cloudflare の Bindings で R2 bucket を追加してください。</p><p><strong>Variable name:</strong> CODE_MEMO_BUCKET<br><strong>Bucket:</strong> code-memo-files</p><p>設定後に Redeploy してください。</p></section>`); }
 function page(title: string, body: string): string { return `<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(title)}</title><style>body{margin:0;background:#f7f5f0;color:#1f2933;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;line-height:1.6}main{max-width:920px;margin:0 auto;padding:16px}.card{background:#fff;border:1px solid #e5e1d8;border-radius:16px;padding:16px;margin:14px 0}.row{display:flex;gap:10px;flex-wrap:wrap}button,.button{min-height:44px;padding:0 16px;border:1px solid #777;border-radius:12px;background:white;color:#111;text-decoration:none;display:inline-flex;align-items:center}input,textarea{font-size:16px;width:100%;box-sizing:border-box;padding:10px;border:1px solid #ccc;border-radius:10px}pre{white-space:pre;overflow:auto;background:#111827;color:white;border-radius:12px;padding:12px;font-size:13px}small{color:#667085}</style><script>function copyText(id){const el=document.getElementById(id);if(el)navigator.clipboard.writeText(el.value)}</script></head><body><main>${body}</main></body></html>`; }
