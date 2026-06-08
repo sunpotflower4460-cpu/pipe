@@ -1,0 +1,21 @@
+name = "code-memo"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+[[r2_buckets]]
+binding = "CODE_MEMO_BUCKET"
+bucket_name = "code-memo-files"
+
+[[kv_namespaces]]
+binding = "CODE_MEMO_KV"
+id = "REPLACE_WITH_KV_NAMESPACE_ID"
+preview_id = "REPLACE_WITH_PREVIEW_KV_NAMESPACE_ID"
+
+[vars]
+APP_NAME = "Code Memo"
+MAX_FILE_BYTES = "2500000"
+MAX_FILES_PER_ZIP = "800"
+DEFAULT_FROM = "1"
+DEFAULT_TO = "600"
+MAX_LINES_PER_RESPONSE = "800"
