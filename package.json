@@ -1,0 +1,18 @@
+{
+  "name": "pipe-code-memo-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit --project cloudflare/tsconfig.json"
+  },
+  "dependencies": {
+    "@cloudflare/workers-types": "latest",
+    "jszip": "^3.10.1"
+  },
+  "devDependencies": {
+    "typescript": "^5.5.4",
+    "wrangler": "^4.98.0"
+  }
+}
