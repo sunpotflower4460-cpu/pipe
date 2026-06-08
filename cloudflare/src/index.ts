@@ -34,7 +34,7 @@ async function route(request: Request, env: Env): Promise<Response> {
   if (request.method === "POST" && action) return changeMemo(request, env, action[1], action[2]);
 
   const index = url.pathname.match(/^\/t\/([^/]+)\/index$/);
-  if (request.method === "GET" && index) return shareIndex(env, index[1]);
+  if (request.method === "GET" && index) return shareIndex(request, env, index[1]);
 
   const file = url.pathname.match(/^\/t\/([^/]+)\/file$/);
   if (request.method === "GET" && file) return shareFile(request, env, file[1]);
@@ -114,7 +114,7 @@ async function renderHome(request: Request, env: Env, notice = ""): Promise<stri
   const fileList = selected ? selected.files.filter((f) => !f.hidden && !f.deleted).map((f) => `<li><a href="/?id=${selected.id}&path=${encodeURIComponent(f.path)}">${escapeHtml(f.path)}</a> <small>${f.lines} lines</small></li>`).join("") : "";
   const hiddenList = selected ? selected.files.filter((f) => f.hidden && !f.deleted).map((f) => `<li>${escapeHtml(f.path)} <form method="post" action="/memos/${selected.id}/unhide" style="display:inline"><input type="hidden" name="path" value="${escapeHtml(f.path)}"><button>戻す</button></form></li>`).join("") : "";
   const bodyView = selected && selectedPath ? await renderFile(env, selected, selectedPath) : "<p>ファイルを選ぶとコード本文が表示されます。</p>";
-  const template = indexUrl ? `以下のCode Memo URLからコードを確認してください。\nまずindexを読んで、必要なファイルはfile URLで分割して読んでください。\n\n${indexUrl}` : "ZIPを追加するとここにAI用文章が出ます。";
+  const template = indexUrl ? `以下のCode Memo index URLからコードを確認してください。\nindexには各ファイル本文を読むための file url が入っています。必要なファイルの url を開いて中身を読んでください。\n\n${indexUrl}` : "ZIPを追加するとここにAI用文章が出ます。";
 
   return page(appName, `
     <h1>${escapeHtml(appName)}</h1>
@@ -138,11 +138,29 @@ async function renderFile(env: Env, memo: Memo, path: string): Promise<string> {
   return `<h3>${escapeHtml(path)}</h3><div class="row"><form method="post" action="/memos/${memo.id}/hide"><input type="hidden" name="path" value="${escapeHtml(path)}"><button>隠す</button></form><form method="post" action="/memos/${memo.id}/delete-file" onsubmit="return confirm('このファイルを削除します。')"><input type="hidden" name="path" value="${escapeHtml(path)}"><button>削除</button></form></div><pre>${code}</pre>`;
 }
 
-async function shareIndex(env: Env, id: string): Promise<Response> {
+async function shareIndex(request: Request, env: Env, id: string): Promise<Response> {
   const memo = await getMemo(env, id);
   if (!memo) return plain("ERROR: memo not found", 404);
+  const url = new URL(request.url);
+  const shareBase = publicOrigin(url, env);
   const visible = memo.files.filter((f) => !f.hidden && !f.deleted);
-  return plain([`# ${memo.name}`, "", ...visible.map((f) => `${f.path} | ${f.lines} lines | ${f.bytes} bytes`), "", `Total files: ${visible.length}`].join("\n"));
+  const lines: string[] = [
+    `# ${memo.name}`,
+    "",
+    "This index includes direct file URLs. Open the url for any file you need to read.",
+    "Format: FILE / lines / bytes / url",
+    "",
+  ];
+  visible.forEach((f, i) => {
+    const fileUrl = `${shareBase}/t/${id}/file?path=${encodeURIComponent(f.path)}&from=1&to=600`;
+    lines.push(`FILE ${i + 1}: ${f.path}`);
+    lines.push(`lines: ${f.lines}`);
+    lines.push(`bytes: ${f.bytes}`);
+    lines.push(`url: ${fileUrl}`);
+    lines.push("");
+  });
+  lines.push(`Total files: ${visible.length}`);
+  return plain(lines.join("\n"));
 }
 
 async function shareFile(request: Request, env: Env, id: string): Promise<Response> {
