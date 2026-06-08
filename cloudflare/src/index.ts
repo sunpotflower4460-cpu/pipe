@@ -6,8 +6,9 @@ type Env = {
   PUBLIC_ORIGIN?: string;
   MAX_FILE_BYTES?: string;
   MAX_FILES_PER_ZIP?: string;
-  DEFAULT_TO?: string;
   MAX_LINES_PER_RESPONSE?: string;
+  MAX_BUNDLE_FILES?: string;
+  MAX_BUNDLE_CHARS?: string;
 };
 
 type FileInfo = { path: string; lines: number; bytes: number; hidden?: boolean; deleted?: boolean };
@@ -33,17 +34,14 @@ async function route(request: Request, env: Env): Promise<Response> {
   const action = url.pathname.match(/^\/memos\/([^/]+)\/(hide|unhide|delete-file|delete)$/);
   if (request.method === "POST" && action) return changeMemo(request, env, action[1], action[2]);
 
-  const index = url.pathname.match(/^\/t\/([^/]+)\/index$/);
+  const index = url.pathname.match(/^\/(?:t|raw)\/([^/]+)\/index$/);
   if (request.method === "GET" && index) return shareIndex(request, env, index[1]);
 
-  const file = url.pathname.match(/^\/t\/([^/]+)\/file$/);
+  const file = url.pathname.match(/^\/(?:t|raw)\/([^/]+)\/file$/);
   if (request.method === "GET" && file) return shareFile(request, env, file[1]);
 
-  const rawIndex = url.pathname.match(/^\/raw\/([^/]+)\/index$/);
-  if (request.method === "GET" && rawIndex) return shareIndex(request, env, rawIndex[1]);
-
-  const rawFile = url.pathname.match(/^\/raw\/([^/]+)\/file$/);
-  if (request.method === "GET" && rawFile) return shareFile(request, env, rawFile[1]);
+  const bundle = url.pathname.match(/^\/(?:t|raw)\/([^/]+)\/bundle$/);
+  if (request.method === "GET" && bundle) return shareBundle(request, env, bundle[1]);
 
   return html(await renderHome(request, env));
 }
@@ -114,13 +112,14 @@ async function renderHome(request: Request, env: Env, notice = ""): Promise<stri
   const selectedPath = url.searchParams.get("path") || "";
   const shareBase = publicOrigin(url, env);
   const indexUrl = selected ? `${shareBase}/raw/${selected.id}/index` : "";
+  const bundleUrl = selected ? `${shareBase}/raw/${selected.id}/bundle` : "";
   const fileUrl = selected && selectedPath ? `${shareBase}/raw/${selected.id}/file?path=${encodeURIComponent(selectedPath)}&from=1&to=600` : "";
 
   const memoList = memos.map((m) => `<li><a href="/?id=${m.id}">${escapeHtml(m.name)}</a><br><small>${m.files.filter((f) => !f.hidden && !f.deleted).length} files</small></li>`).join("");
   const fileList = selected ? selected.files.filter((f) => !f.hidden && !f.deleted).map((f) => `<li><a href="/?id=${selected.id}&path=${encodeURIComponent(f.path)}">${escapeHtml(f.path)}</a> <small>${f.lines} lines</small></li>`).join("") : "";
   const hiddenList = selected ? selected.files.filter((f) => f.hidden && !f.deleted).map((f) => `<li>${escapeHtml(f.path)} <form method="post" action="/memos/${selected.id}/unhide" style="display:inline"><input type="hidden" name="path" value="${escapeHtml(f.path)}"><button>戻す</button></form></li>`).join("") : "";
   const bodyView = selected && selectedPath ? await renderFile(env, selected, selectedPath) : "<p>ファイルを選ぶとコード本文が表示されます。</p>";
-  const template = indexUrl ? `以下のCode Memo raw index URLからコードを確認してください。\nraw indexには各ファイル本文を読むための raw file url が入っています。必要なファイルの url を開いて中身を読んでください。\n\n${indexUrl}` : "ZIPを追加するとここにAI用文章が出ます。";
+  const template = indexUrl ? `以下のCode Memo raw index URLからコードを確認してください。\nまず bundle URL で主要ファイル本文を読み、必要なら raw index 内の raw file url を開いてください。\n\nBundle:\n${bundleUrl}\n\nIndex:\n${indexUrl}` : "ZIPを追加するとここにAI用文章が出ます。";
 
   return page(appName, `
     <h1>${escapeHtml(appName)}</h1>
@@ -128,7 +127,7 @@ async function renderHome(request: Request, env: Env, notice = ""): Promise<stri
     ${notice ? `<section class="card"><strong>${escapeHtml(notice)}</strong></section>` : ""}
     <section class="card"><h2>ファイルを追加</h2><form id="uploadForm" method="post" enctype="multipart/form-data" action="/memos/create"><label>メモ名<input name="name" value="Code Memo"></label><br><br><label>ZIPファイル<input id="zipInput" type="file" name="file" accept=".zip,application/zip" required></label><br><br><div class="row"><button id="uploadButton">ファイルを追加</button><a class="button" href="#share">シェア</a></div><div id="uploadPanel" class="progress-panel" hidden><div class="progress-label"><span id="uploadStatus">待機中...</span><span id="uploadPercent">0%</span></div><progress id="uploadProgress" max="100" value="0"></progress><small id="uploadHint">アップロード後、ZIPを展開してR2へ保存します。大きいZIPでは少し時間がかかります。</small></div></form></section>
     <section class="card"><h2>メモ</h2><ul>${memoList || "<li>まだありません。</li>"}</ul></section>
-    ${selected ? `<section class="card"><h2>${escapeHtml(selected.name)}</h2><form method="post" action="/memos/${selected.id}/delete" onsubmit="return confirm('このメモを削除します。')"><button>このメモを削除</button></form><h3>ファイル一覧</h3><ul>${fileList || "<li>表示できるファイルがありません。</li>"}</ul><h3>隠したファイル</h3><ul>${hiddenList || "<li>まだありません。</li>"}</ul></section><section class="card"><h2>コード本文</h2>${bodyView}</section><section class="card" id="share"><h2>シェア</h2><label>raw index URL<input id="indexUrl" readonly value="${escapeHtml(indexUrl)}"></label><button onclick="copyText('indexUrl')">raw index URLをコピー</button><br><br><label>raw file URL<input id="fileUrl" readonly value="${escapeHtml(fileUrl)}"></label><button onclick="copyText('fileUrl')">raw file URLをコピー</button><br><br><label>AIに貼る文章<textarea id="tpl" rows="5" readonly>${escapeHtml(template)}</textarea></label><button onclick="copyText('tpl')">テンプレートをコピー</button></section>` : ""}
+    ${selected ? `<section class="card"><h2>${escapeHtml(selected.name)}</h2><form method="post" action="/memos/${selected.id}/delete" onsubmit="return confirm('このメモを削除します。')"><button>このメモを削除</button></form><h3>ファイル一覧</h3><ul>${fileList || "<li>表示できるファイルがありません。</li>"}</ul><h3>隠したファイル</h3><ul>${hiddenList || "<li>まだありません。</li>"}</ul></section><section class="card"><h2>コード本文</h2>${bodyView}</section><section class="card" id="share"><h2>シェア</h2><label>raw bundle URL<input id="bundleUrl" readonly value="${escapeHtml(bundleUrl)}"></label><button onclick="copyText('bundleUrl')">raw bundle URLをコピー</button><br><br><label>raw index URL<input id="indexUrl" readonly value="${escapeHtml(indexUrl)}"></label><button onclick="copyText('indexUrl')">raw index URLをコピー</button><br><br><label>raw file URL<input id="fileUrl" readonly value="${escapeHtml(fileUrl)}"></label><button onclick="copyText('fileUrl')">raw file URLをコピー</button><br><br><label>AIに貼る文章<textarea id="tpl" rows="7" readonly>${escapeHtml(template)}</textarea></label><button onclick="copyText('tpl')">テンプレートをコピー</button></section>` : ""}
   `);
 }
 
@@ -154,6 +153,7 @@ async function shareIndex(request: Request, env: Env, id: string): Promise<Respo
     `# ${memo.name}`,
     "",
     "This raw index includes direct raw file URLs. Open the url for any file you need to read.",
+    `bundle: ${shareBase}/raw/${id}/bundle`,
     "Format: FILE / lines / bytes / url",
     "",
   ];
@@ -167,6 +167,39 @@ async function shareIndex(request: Request, env: Env, id: string): Promise<Respo
   });
   lines.push(`Total files: ${visible.length}`);
   return plain(lines.join("\n"));
+}
+
+async function shareBundle(request: Request, env: Env, id: string): Promise<Response> {
+  const memo = await getMemo(env, id);
+  if (!memo) return plain("ERROR: memo not found", 404);
+  const url = new URL(request.url);
+  const maxFiles = Math.min(readInt(url.searchParams.get("maxFiles") || env.MAX_BUNDLE_FILES, 24), 80);
+  const maxChars = Math.min(readInt(url.searchParams.get("maxChars") || env.MAX_BUNDLE_CHARS, 160000), 500000);
+  const visible = memo.files.filter((f) => !f.hidden && !f.deleted);
+  const selected = selectBundleFiles(visible).slice(0, maxFiles);
+  const out: string[] = [
+    `# ${memo.name} raw bundle`,
+    "",
+    "This bundle contains the first important readable files. If you need more, open the raw index and then each raw file url.",
+    `raw index: ${publicOrigin(url, env)}/raw/${id}/index`,
+    `maxFiles: ${maxFiles}`,
+    `maxChars: ${maxChars}`,
+    "",
+  ];
+  let used = out.join("\n").length;
+  for (const f of selected) {
+    if (used >= maxChars) break;
+    const obj = await env.CODE_MEMO_BUCKET.get(fileKey(id, f.path));
+    if (!obj) continue;
+    let text = await obj.text();
+    const header = `\n\n===== FILE: ${f.path} | ${f.lines} lines | ${f.bytes} bytes =====\n`;
+    const remaining = maxChars - used - header.length - 80;
+    if (remaining <= 0) break;
+    if (text.length > remaining) text = text.slice(0, remaining) + "\n\n--- truncated: open the raw file url for more ---";
+    out.push(header + text);
+    used += header.length + text.length;
+  }
+  return plain(out.join("\n"));
 }
 
 async function shareFile(request: Request, env: Env, id: string): Promise<Response> {
@@ -228,6 +261,21 @@ async function removeMemoFromIndex(env: Env, id: string): Promise<void> {
   await saveIndex(env, (await loadIndex(env)).filter((x) => x !== id));
 }
 
+function selectBundleFiles(files: FileInfo[]): FileInfo[] {
+  const score = (path: string): number => {
+    const p = path.toLowerCase();
+    if (p.endsWith("readme.md")) return 1000;
+    if (p.endsWith("package.json") || p.endsWith("wrangler.toml") || p.endsWith("cmakelists.txt")) return 900;
+    if (p.endsWith("agents.md") || p.includes("copilot-instructions")) return 850;
+    if (p.includes("current_state") || p.includes("implementation") || p.includes("progress")) return 800;
+    if (p.includes("source/pluginprocessor") || p.includes("source/plugineditor")) return 760;
+    if (p.endsWith(".md")) return 650;
+    if (p.endsWith(".ts") || p.endsWith(".tsx") || p.endsWith(".cpp") || p.endsWith(".h") || p.endsWith(".py")) return 500;
+    return 100;
+  };
+  return [...files].sort((a, b) => score(b.path) - score(a.path) || a.path.localeCompare(b.path));
+}
+
 function indexKey(): string { return "memos/index.json"; }
 function memoKey(id: string): string { return `memos/${id}/memo.json`; }
 function fileKey(id: string, path: string): string { return `memos/${id}/files/${path}`; }
@@ -238,8 +286,8 @@ function decodeText(bytes: Uint8Array): string | null { try { return new TextDec
 function countLines(text: string): number { return text ? text.split(/\r?\n/).length : 0; }
 function readInt(raw: string | null | undefined, fallback: number): number { if (!raw) return fallback; const n = Number.parseInt(raw, 10); return Number.isFinite(n) && n > 0 ? n : fallback; }
 function publicOrigin(url: URL, env: Env): string { const fixed = env.PUBLIC_ORIGIN?.trim().replace(/\/+$/, ""); if (fixed) return fixed; const parts = url.hostname.split("."); const first = parts[0] || ""; const match = first.match(/^[a-f0-9]{6,}-(.+)$/i); if (match && parts.length >= 3 && parts[parts.length - 2] === "workers" && parts[parts.length - 1] === "dev") { return `${url.protocol}//${match[1]}.${parts.slice(1).join(".")}`; } return url.origin; }
-function plain(body: string, status = 200): Response { return new Response(body, { status, headers: { "content-type": "text/plain; charset=utf-8" } }); }
-function html(body: string, status = 200): Response { return new Response(body, { status, headers: { "content-type": "text/html; charset=utf-8" } }); }
+function plain(body: string, status = 200): Response { return new Response(body, { status, headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" } }); }
+function html(body: string, status = 200): Response { return new Response(body, { status, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } }); }
 function escapeHtml(value: unknown): string { return String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\"/g, "&quot;").replace(/'/g, "&#39;"); }
 function setupPage(): string { return page("Code Memo setup", `<h1>Code Memo</h1><section class="card"><h2>R2 binding が未設定です</h2><p>Cloudflare の Bindings で R2 bucket を追加してください。</p><p><strong>Variable name:</strong> CODE_MEMO_BUCKET<br><strong>Bucket:</strong> code-memo-files</p><p>設定後に Redeploy してください。</p></section>`); }
 function page(title: string, body: string): string { return `<!doctype html><html lang="ja"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${escapeHtml(title)}</title><style>body{margin:0;background:#f7f5f0;color:#1f2933;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;line-height:1.6}main{max-width:920px;margin:0 auto;padding:16px}.card{background:#fff;border:1px solid #e5e1d8;border-radius:16px;padding:16px;margin:14px 0}.row{display:flex;gap:10px;flex-wrap:wrap}button,.button{min-height:44px;padding:0 16px;border:1px solid #777;border-radius:12px;background:white;color:#111;text-decoration:none;display:inline-flex;align-items:center}button:disabled{opacity:.55;cursor:not-allowed}input,textarea{font-size:16px;width:100%;box-sizing:border-box;padding:10px;border:1px solid #ccc;border-radius:10px}pre{white-space:pre;overflow:auto;background:#111827;color:white;border-radius:12px;padding:12px;font-size:13px}small{color:#667085}.progress-panel{margin-top:16px;padding:12px;border:1px solid #d8d1c3;border-radius:12px;background:#fbfaf7}.progress-label{display:flex;justify-content:space-between;gap:12px;font-weight:700;margin-bottom:8px}progress{width:100%;height:18px}</style><script>function copyText(id){const el=document.getElementById(id);if(el)navigator.clipboard.writeText(el.value)}document.addEventListener('DOMContentLoaded',function(){const form=document.getElementById('uploadForm');if(!form)return;const panel=document.getElementById('uploadPanel');const progress=document.getElementById('uploadProgress');const status=document.getElementById('uploadStatus');const percent=document.getElementById('uploadPercent');const hint=document.getElementById('uploadHint');const button=document.getElementById('uploadButton');const fileInput=document.getElementById('zipInput');form.addEventListener('submit',function(event){event.preventDefault();const file=fileInput&&fileInput.files&&fileInput.files[0];if(!file){status.textContent='ZIPファイルを選んでください';if(panel)panel.hidden=false;return}if(panel)panel.hidden=false;if(button)button.disabled=true;status.textContent='アップロード準備中...';percent.textContent='0%';progress.value=0;hint.textContent='選択中: '+file.name+' / '+Math.round(file.size/1024)+' KB';const xhr=new XMLHttpRequest();xhr.open('POST',form.action);xhr.upload.onprogress=function(e){if(e.lengthComputable){const p=Math.round((e.loaded/e.total)*100);progress.value=p;percent.textContent=p+'%';status.textContent=p>=100?'ZIPを展開・保存中...':'アップロード中...'}else{status.textContent='アップロード中...';percent.textContent='計算中'}};xhr.onload=function(){if(xhr.status>=200&&xhr.status<400){progress.value=100;percent.textContent='100%';status.textContent='アップロード完了。ZIPを展開・保存しました。';hint.textContent='画面を更新します...';window.location.href=xhr.responseURL||'/'}else{status.textContent='失敗しました';hint.textContent=xhr.responseText||('HTTP '+xhr.status);if(button)button.disabled=false}};xhr.onerror=function(){status.textContent='通信エラー';hint.textContent='ネットワークを確認して、もう一度試してください。';if(button)button.disabled=false};status.textContent='送信中...';xhr.send(new FormData(form))})})</script></head><body><main>${body}</main></body></html>`; }
