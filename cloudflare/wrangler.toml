@@ -2,6 +2,7 @@ name = "code-memo"
 main = "src/index.ts"
 compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
+workers_dev = true
 
 [[r2_buckets]]
 binding = "CODE_MEMO_BUCKET"
