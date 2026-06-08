@@ -8,11 +8,6 @@ workers_dev = true
 binding = "CODE_MEMO_BUCKET"
 bucket_name = "code-memo-files"
 
-[[kv_namespaces]]
-binding = "CODE_MEMO_KV"
-id = "REPLACE_WITH_KV_NAMESPACE_ID"
-preview_id = "REPLACE_WITH_PREVIEW_KV_NAMESPACE_ID"
-
 [vars]
 APP_NAME = "Code Memo"
 MAX_FILE_BYTES = "2500000"
