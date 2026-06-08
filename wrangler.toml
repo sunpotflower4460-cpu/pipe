@@ -4,6 +4,10 @@ compatibility_date = "2025-01-01"
 compatibility_flags = ["nodejs_compat"]
 workers_dev = true
 
+[[r2_buckets]]
+binding = "CODE_MEMO_BUCKET"
+bucket_name = "code-memo-files"
+
 [vars]
 APP_NAME = "Code Memo"
 MAX_FILE_BYTES = "2500000"
